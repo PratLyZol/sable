@@ -25,6 +25,27 @@ The copilot chat dock (bottom-right) needs **one** of these in `.env.local`:
 
 Everything else runs with zero configuration: the confidential-transfer rail, x402 settlement, and delegation layer are simulated in-process (see below), with the budget cap genuinely enforced in the only code path that moves agent money.
 
+## Real devnet mode
+
+The same dashboard can settle on **Solana devnet** for real instead of the in-memory rail. Three steps:
+
+```bash
+npm run devnet:setup                 # mints a token, funds the treasury, writes .sable/
+# set SABLE_MODE=devnet in .env.local
+npm run dev                          # restart so the server picks up the mode
+```
+
+What becomes real when `SABLE_MODE=devnet`:
+
+- **Payments are Token-2022 transfers** of a USD token Sable mints to itself on devnet — payroll, vendor payouts, and agent spend all move real tokens between real accounts.
+- **Real signatures and explorer links** — every settled payment carries its actual devnet transaction signature. Click any signature in payroll history, the ledger, the agents view, or the explorer to open it on Solana Explorer.
+- **x402 endpoints are paid on-chain** — subagents hit real 402-gated endpoints and complete the `402 → pay → retry` handshake, with **replay-protected nonces** so a settled payment can't be reused.
+- **The budget guard still refuses before signing** — the cap is enforced in the same single code path, so an overspend is rejected *before* any transaction is submitted, on devnet exactly as in the simulation.
+
+**The honest caveat:** devnet's ZK proof verifier is disabled pending audit, so shielded confidential transfers can't be verified there yet. The demo token **is** confidential-transfer-ready, but devnet settlement is **public on-chain** — the shielded ledger in the app is Sable's privacy layer over the top, and mainnet is where the confidential rail lights up.
+
+**Airdrops:** `npm run devnet:setup` generates and funds a treasury keypair stored in `.sable/`. If the built-in airdrop runs dry (devnet faucets are rate-limited), top the treasury address up at [faucet.solana.com](https://faucet.solana.com) and re-run the app.
+
 ## The 3-minute demo
 
 1. **Run payroll** (`/payroll`) — pay 5 contractors in 5 countries in one click. Then open **Explorer** (`/explorer`): the public chain view shows only ciphertext.
@@ -36,7 +57,11 @@ Everything else runs with zero configuration: the confidential-transfer rail, x4
 
 **Real in this demo:** the three-surface dashboard, the orchestrator/subagent loop with scoped budgets, hard cap enforcement at the payment path (`guardSpend` in `lib/store.ts` is the *only* way agent money moves — overspends are refused, not logged), viewing-key scoped disclosure, the public/private explorer contrast, and an LLM copilot that executes payroll, vendor payments, fleet dispatches, viewing keys, and the kill switch through tool calls.
 
-**Simulated:** the chain itself. Payments settle into an in-memory ledger with fake Solana signatures standing in for Confidential Balances transfers; x402 quotes/settlement are scripted. Post-hackathon path: Solana Confidential Balances or Hinkal for the shielded rail, a CDP/PayAI facilitator for x402, ERC-7710/7715-style scoped delegation on-chain, Skyfire for KYA, and Ramp-native reconciliation export.
+**Simulated by default:** the chain itself. In the default mode, payments settle into an in-memory ledger with fake Solana signatures standing in for Confidential Balances transfers; x402 quotes/settlement are scripted.
+
+**Real with `SABLE_MODE=devnet`:** flip the switch (see [Real devnet mode](#real-devnet-mode)) and payments become on-chain Token-2022 transfers on Solana devnet, with real signatures, explorer links, and x402 endpoints paid on-chain over a replay-protected `402 → pay → retry` handshake — the budget guard still refusing overspends before anything is signed. The one thing devnet can't do yet is verify shielded confidential transfers (its ZK verifier is audit-disabled), so devnet settlement is public; the token is confidential-transfer-ready for mainnet.
+
+Post-hackathon path: Solana Confidential Balances or Hinkal for the shielded rail on mainnet, a CDP/PayAI facilitator for x402, ERC-7710/7715-style scoped delegation on-chain, Skyfire for KYA, and Ramp-native reconciliation export.
 
 ## Why this wins "Save Time. Save Money."
 

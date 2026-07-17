@@ -160,11 +160,24 @@ function RunCard({ run, payments }: { run: AgentRun; payments: Payment[] }) {
       {/* Payments */}
       {runPayments.length > 0 ? (
         <div className="flex flex-wrap gap-2">
-          {runPayments.map((p) => (
-            <span key={p.id} className="chip chip-veil num">
-              {usd(p.amount)} → {p.counterparty}
-            </span>
-          ))}
+          {runPayments.map((p) =>
+            p.explorerUrl ? (
+              <a
+                key={p.id}
+                href={p.explorerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="chip chip-veil num hover:underline"
+                title="View on Solana Explorer"
+              >
+                {usd(p.amount)} → {p.counterparty}
+              </a>
+            ) : (
+              <span key={p.id} className="chip chip-veil num">
+                {usd(p.amount)} → {p.counterparty}
+              </span>
+            ),
+          )}
         </div>
       ) : null}
     </div>

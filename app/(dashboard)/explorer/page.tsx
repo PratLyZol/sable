@@ -14,6 +14,11 @@ function KindChip({ kind }: { kind: ExplorerEntry["kind"] }) {
 export default function Explorer() {
   const snap = useLive();
   const entries = snap?.explorer ?? [];
+  const mode = snap?.chain.mode ?? "sim";
+  // In devnet mode, entries whose sig matches a real settled payment link out
+  // to Solana Explorer. In sim mode no payment carries an explorerUrl, so this
+  // map yields nothing and the view renders exactly as before.
+  const bySig = new Map((snap?.payments ?? []).map((p) => [p.sig, p] as const));
 
   return (
     <div>
@@ -27,9 +32,20 @@ export default function Explorer() {
         </header>
 
         <div className="mb-5">
-          <span className="chip chip-veil">
-            <span className="shield-dot" /> {entries.length} confidential transfers · 0 amounts legible
-          </span>
+          {mode === "devnet" ? (
+            <div className="space-y-2">
+              <span className="chip chip-ok">live devnet feed</span>
+              <p className="text-sm text-dim">
+                This mint is confidential-transfer-ready, but devnet&apos;s ZK proof verifier is disabled pending
+                audit — so demo settlement is public on-chain, and the shielded ledger below is Sable&apos;s privacy
+                layer.
+              </p>
+            </div>
+          ) : (
+            <span className="chip chip-veil">
+              <span className="shield-dot" /> {entries.length} confidential transfers · 0 amounts legible
+            </span>
+          )}
         </div>
 
         <div className="max-h-[560px] overflow-y-auto">
@@ -51,10 +67,26 @@ export default function Explorer() {
                   <td colSpan={7} className="text-faint text-xs">…</td>
                 </tr>
               ) : (
-                entries.map((e) => (
+                entries.map((e) => {
+                  const match = bySig.get(e.sig);
+                  return (
                   <tr key={e.sig}>
                     <td className="num text-xs text-dim">{e.slot.toLocaleString("en-US")}</td>
-                    <td className="sig text-xs">{shortSig(e.sig, 8)}</td>
+                    <td className="sig text-xs">
+                      {match?.explorerUrl ? (
+                        <a
+                          href={match.explorerUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="sig hover:underline"
+                          title="View on Solana Explorer"
+                        >
+                          {shortSig(e.sig, 8)}
+                        </a>
+                      ) : (
+                        shortSig(e.sig, 8)
+                      )}
+                    </td>
                     <td className="num text-xs text-faint">{e.program}</td>
                     <td>
                       <KindChip kind={e.kind} />
@@ -67,7 +99,8 @@ export default function Explorer() {
                       <Cipher value="0x00000000" revealed={false} />
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

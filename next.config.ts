@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["@solana/web3.js", "@solana/spl-token"],
 };
 
 export default nextConfig;

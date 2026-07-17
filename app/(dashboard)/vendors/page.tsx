@@ -8,6 +8,27 @@ import type { Payment, ViewingKey } from "@/lib/store";
 
 const inputCls = "bg-panel2 border hairline rounded-lg px-3 py-2 w-full text-ink";
 
+// Renders a payment's on-chain signature: a live "settling" chip while the
+// devnet transfer confirms, "failed" on error, an Explorer link once the real
+// sig lands, or the plain sig for simulated transfers.
+function PaymentSig({ p }: { p: Payment }) {
+  if (p.status === "settling") return <span className="chip chip-gold pulse">settling ⛓</span>;
+  if (p.status === "failed") return <span className="chip chip-bad">failed</span>;
+  if (p.explorerUrl)
+    return (
+      <a
+        href={p.explorerUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="sig hover:underline"
+        title="View on Solana Explorer"
+      >
+        {shortSig(p.sig)}
+      </a>
+    );
+  return <span className="sig">{shortSig(p.sig)}</span>;
+}
+
 export default function Vendors() {
   const snap = useLive();
   const vendors = snap?.vendors ?? [];
@@ -147,7 +168,7 @@ export default function Vendors() {
                 </span>
                 <span className="text-ink text-sm">{sent.counterparty}</span>
                 <span className="num text-ink text-sm">{usd(sent.amount)}</span>
-                <span className="sig">{shortSig(sent.sig)}</span>
+                <PaymentSig p={sent} />
               </div>
             )}
           </div>

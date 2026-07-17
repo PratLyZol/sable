@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useLive } from "@/lib/useLive";
 import { usdc, clock, shortSig } from "@/lib/format";
-import type { PaymentKind, ViewingKey } from "@/lib/store";
+import type { Payment, PaymentKind, ViewingKey } from "@/lib/store";
 
 type Filter = "all" | PaymentKind;
 
@@ -22,6 +22,27 @@ function dateShort(ts: number): string {
 function KindChip({ kind }: { kind: PaymentKind }) {
   const label = kind === "vendor" ? "vendor" : kind;
   return <span className={`chip ${kind === "agent" ? "chip-veil" : ""}`}>{label}</span>;
+}
+
+// Renders a payment's on-chain signature: a live "settling" chip while the
+// devnet transfer confirms, "failed" on error, an Explorer link once the real
+// sig lands, or the plain sig for simulated transfers.
+function PaymentSig({ p }: { p: Payment }) {
+  if (p.status === "settling") return <span className="chip chip-gold pulse">settling ⛓</span>;
+  if (p.status === "failed") return <span className="chip chip-bad">failed</span>;
+  if (p.explorerUrl)
+    return (
+      <a
+        href={p.explorerUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="sig hover:underline"
+        title="View on Solana Explorer"
+      >
+        {shortSig(p.sig)}
+      </a>
+    );
+  return <span className="sig">{shortSig(p.sig)}</span>;
 }
 
 export default function Ledger() {
@@ -153,7 +174,7 @@ export default function Ledger() {
                     <td className="text-dim">{p.memo}</td>
                     <td className="num text-ink text-right">{usdc(p.amount)}</td>
                     <td className="text-right">
-                      <span className="sig">{shortSig(p.sig)}</span>
+                      <PaymentSig p={p} />
                     </td>
                   </tr>
                 ))

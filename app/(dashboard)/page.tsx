@@ -31,6 +31,14 @@ export default function Overview() {
         <p className="text-dim mt-2">
           Payroll, vendors, and agent fleets settle over shielded stablecoin transfers — one treasury, one ledger.
         </p>
+        {snap?.chain.mode === "devnet" ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="chip chip-ok">Settling live on Solana devnet</span>
+            <span className="text-xs text-dim">
+              Payments below carry real transaction signatures — click any to verify on-chain.
+            </span>
+          </div>
+        ) : null}
       </header>
 
       <div className="grid grid-cols-4 gap-4">

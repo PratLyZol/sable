@@ -56,6 +56,19 @@ export function Sidebar() {
         <div className="mt-3">
           <span className="chip chip-veil">all transfers shielded</span>
         </div>
+        {snap?.chain.mode === "devnet" && snap.chain.treasuryAddress ? (
+          <div className="mt-2">
+            <a
+              href={`https://explorer.solana.com/address/${snap.chain.treasuryAddress}?cluster=devnet`}
+              target="_blank"
+              rel="noreferrer"
+              className="chip chip-ok"
+              title="View treasury on Solana Explorer"
+            >
+              live on devnet
+            </a>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

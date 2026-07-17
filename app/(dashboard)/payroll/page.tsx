@@ -7,6 +7,27 @@ import type { Payment } from "@/lib/store";
 
 type RunResult = { payments: Payment[]; total: number; count: number };
 
+// Renders a payment's on-chain signature: a live "settling" chip while the
+// devnet transfer confirms, "failed" on error, an Explorer link once the real
+// sig lands, or the plain sig for simulated transfers.
+function PaymentSig({ p }: { p: Payment }) {
+  if (p.status === "settling") return <span className="chip chip-gold pulse">settling ⛓</span>;
+  if (p.status === "failed") return <span className="chip chip-bad">failed</span>;
+  if (p.explorerUrl)
+    return (
+      <a
+        href={p.explorerUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="sig hover:underline"
+        title="View on Solana Explorer"
+      >
+        {shortSig(p.sig)}
+      </a>
+    );
+  return <span className="sig">{shortSig(p.sig)}</span>;
+}
+
 export default function Payroll() {
   const snap = useLive();
   const contractors = snap?.contractors ?? [];
@@ -151,7 +172,7 @@ export default function Payroll() {
                       {usd(p.amount)}
                     </td>
                     <td className="text-faint text-xs">{timeAgo(p.ts)}</td>
-                    <td className="sig">{shortSig(p.sig)}</td>
+                    <td><PaymentSig p={p} /></td>
                   </tr>
                 ))
               )}
