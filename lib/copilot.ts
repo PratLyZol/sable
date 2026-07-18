@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   getSnapshot,
   runPayroll,
+  addContractor,
   payVendor,
   payByEmail,
   dispatchFleet,
@@ -62,6 +63,23 @@ export function buildTools(onAction?: (a: ActionReport) => void) {
           runs: s.runs.slice(0, 10).map((r) => ({ id: r.id, goal: r.goal, status: r.status, spent: r.spent, budget: r.budget })),
           viewingKeys: s.keys.slice(0, 10).map((k) => ({ key: k.key, label: k.label })),
         };
+      },
+    }),
+    add_contractor: tool({
+      description:
+        "Add a person to payroll. They join the contractor list and get paid (with a claim email) on the next payroll run. Amount is their per-cycle pay in USD.",
+      inputSchema: z.object({
+        name: z.string().describe("Full name."),
+        email: z.string().describe("Email — where their claim link is sent."),
+        amount: z.number().positive().describe("Per-cycle pay in USD."),
+        role: z.string().optional().describe("Role, e.g. 'Product engineer'."),
+        country: z.string().optional().describe("Country name."),
+      }),
+      execute: async ({ name, email, amount, role, country }) => {
+        const r = addContractor({ name, email, amount, role, country });
+        if ("error" in r) return r;
+        report("add_contractor", `${r.name} · $${r.amount.toLocaleString()}/cycle`);
+        return { id: r.id, name: r.name, email: r.email, amount: r.amount, role: r.role, country: r.country };
       },
     }),
     run_payroll: tool({
