@@ -25,6 +25,7 @@ export type Payment = {
   status: "settled" | "settling" | "failed";
   chain: "sim" | "devnet";
   explorerUrl?: string; // devnet only, populated once the real sig lands
+  seeded?: boolean; // demo seed data — excluded from claim escrow math (devnet parity: seeds never settled on-chain)
   contractorId?: string;
   vendorId?: string;
   runId?: string;
@@ -210,7 +211,7 @@ function seed(): Store {
   };
 
   const pay = (p: SettleInput) => {
-    const payment: Payment = { ...p, id: uid("pay"), sig: fakeSig(), status: "settled", chain: "sim" };
+    const payment: Payment = { ...p, id: uid("pay"), sig: fakeSig(), status: "settled", chain: "sim", seeded: true };
     store.payments.unshift(payment);
     store.balance = round2(store.balance - payment.amount);
     store.slot += 1 + Math.floor(Math.random() * 40);

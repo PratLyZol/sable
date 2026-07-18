@@ -88,7 +88,10 @@ export default function Claim() {
     setStored(loadKey(token));
   }, [token]);
 
-  // Poll the claim view every 4s.
+  // Poll the claim view every 4s. Once the page has loaded successfully it
+  // never downgrades to "invalid" on a transient fetch failure (dev-server
+  // recompiles, network blips) — tracked via a ref, not the stale closure state.
+  const hasLoadedRef = useRef(false);
   useEffect(() => {
     if (!token) return;
     let dead = false;
@@ -97,15 +100,16 @@ export default function Claim() {
         const res = await fetch(`/api/claim/${token}`, { cache: "no-store" });
         if (dead) return;
         if (!res.ok) {
-          if (state !== "valid") setState("invalid");
+          if (!hasLoadedRef.current) setState("invalid");
           return;
         }
         const json: ClaimView = await res.json();
         if (dead) return;
+        hasLoadedRef.current = true;
         setData(json);
         setState("valid");
       } catch {
-        if (!dead && state !== "valid") setState("invalid");
+        if (!dead && !hasLoadedRef.current) setState("invalid");
       } finally {
         if (!dead) setTimeout(tick, 4000);
       }
@@ -276,8 +280,8 @@ export default function Claim() {
             </section>
           )}
 
-          {/* 3 — wallet */}
-          {data.claimed && (
+          {/* 3 — wallet (hidden when the funds live on another device's key) */}
+          {data.claimed && !claimedElsewhere && (
             <section className="panel p-5">
               <div className="eyebrow">Your wallet</div>
               <div className="num mt-1 text-2xl text-ink">{usd(data.claimed.balance)}</div>
@@ -314,7 +318,7 @@ export default function Claim() {
           )}
 
           {/* 4 — backup secret */}
-          {stored && (
+          {stored && !claimedElsewhere && (
             <details className="panel p-5">
               <summary className="cursor-pointer text-ink">Back up your secret key</summary>
               <div className="mt-3 space-y-3">

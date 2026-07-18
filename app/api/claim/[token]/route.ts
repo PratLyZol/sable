@@ -49,7 +49,9 @@ function maskEmail(email: string): string {
 
 // Payments for this recipient that fund the claim: payroll/vendor, never agent spend.
 function matchingPayments(recipientName: string): Payment[] {
-  return getSnapshot().payments.filter((p) => p.counterparty === recipientName && p.kind !== "agent");
+  // Seeded demo rows are excluded: on devnet they never settled on-chain, so
+  // counting them in sim would make the two modes disagree about escrow.
+  return getSnapshot().payments.filter((p) => p.counterparty === recipientName && p.kind !== "agent" && !p.seeded);
 }
 
 function toClaimPayment(p: Payment): ClaimPayment {
@@ -157,7 +159,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       return NextResponse.json({ error: message }, { status: 502 });
     }
     bindClaimAddress(token, target);
-    if (r.amount > 0) {
+    // Concurrent claims share one sweep via the per-name lock — record it once.
+    if (r.amount > 0 && !record.sweeps.some((s) => s.sig === r.sig)) {
       recordSweep(token, { sig: r.sig, amount: r.amount, ts: Date.now(), explorerUrl: r.explorerUrl });
     }
     return NextResponse.json({ ok: true, address: target, amount: r.amount, sig: r.sig, explorerUrl: r.explorerUrl });
