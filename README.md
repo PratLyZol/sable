@@ -51,7 +51,7 @@ What becomes real when `SABLE_MODE=devnet`:
 Every payment Sable makes — payroll, vendor payout, agent spend — emails the recipient a private claim link. No wallet, no seed phrase, nothing to install. The recipient opens the link (or scans the QR in the email) on their phone, taps **Claim funds**, and a fresh Solana keypair is generated **in their browser** and used to sweep the escrowed funds. Sable never sees the key: custody is non-custodial from the first tap.
 
 - **Email → QR → wallet → sweep.** The claim email carries a QR of the claim link. Scanning it opens the recipient's wallet page (`/claim/<token>`), where the funds waiting in escrow are swept to a keypair held only in the recipient's `localStorage`. They can back up (copy/download) the secret key from that page.
-- **The Outbox** (`/outbox`) is the sender's view: every claim email, its live preview, and a one-click **open claim page** link. With no email provider configured, this is where the emails live; with Resend configured, it mirrors what was sent.
+- **The Outbox** (`/outbox`) is the sender's view: every claim email, its live preview, and a one-click **open claim page** link. With no SMTP configured, this is where the emails live; with SMTP configured, it mirrors what was sent.
 
 **Demo it:**
 
@@ -59,7 +59,7 @@ Every payment Sable makes — payroll, vendor payout, agent spend — emails the
 2. **Open the Outbox** (`/outbox`) — pick an email, preview it, and click **open claim page →**.
 3. **Claim** — on the claim page, tap **Claim funds**. Watch the escrow sweep into a browser-held wallet, with the address, QR, and (in devnet) an Explorer link.
 
-**Real email (optional):** set `RESEND_API_KEY` to send for real. The shared `onboarding@resend.dev` sender only delivers to the address that owns the Resend account, so verify your own domain (and set `SABLE_EMAIL_FROM`) to email arbitrary recipients. Without a key, everything still works — emails just land in the in-app Outbox.
+**Real email (optional):** set `SABLE_SMTP_USER` + `SABLE_SMTP_PASS` to send for real over SMTP — a Gmail address with an [app password](https://myaccount.google.com/apppasswords) delivers to any recipient (host/port default to Gmail; any SMTP provider works via `SABLE_SMTP_HOST`/`SABLE_SMTP_PORT`). Without credentials, everything still works — emails just land in the in-app Outbox.
 
 **Phone-scan demo:** set `SABLE_PUBLIC_URL` to your machine's LAN IP (e.g. `http://192.168.1.42:3000`) and run the dev server with `next dev -H 0.0.0.0`. Claim links and QR codes then point at your LAN address so a phone on the same Wi-Fi can open them.
 

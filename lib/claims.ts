@@ -33,9 +33,9 @@ export type OutboxEmail = {
   html: string;
   claimUrl: string;
   ts: number;
-  via: "outbox" | "resend";
+  via: "outbox" | "smtp";
   paymentId?: string;
-  resendError?: string;
+  sendError?: string;
 };
 
 // ---------- small local helpers (kept independent of lib/store) ----------

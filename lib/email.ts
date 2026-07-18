@@ -1,16 +1,35 @@
 // Sable payment email — the "you've been paid" message with a claim link + QR.
 //
-// Emails ALWAYS land in the in-app outbox (the demo surface); when RESEND_API_KEY
-// is set they are ALSO sent for real via Resend. Sending must NEVER throw: the
-// whole body is wrapped in try/catch so a mail failure can't disturb the payment
-// path that fired it. HTML uses inline styles only — email clients strip
-// stylesheets. The QR: the OUTBOX copy points at the served PNG
+// Emails ALWAYS land in the in-app outbox (the demo surface). Real delivery is
+// SMTP via nodemailer (SABLE_SMTP_USER/PASS — e.g. Gmail with an app password,
+// delivers to any address). Sending must
+// NEVER throw: the whole body is wrapped in try/catch so a mail failure can't
+// disturb the payment path that fired it. HTML uses inline styles only — email
+// clients strip stylesheets. The QR: the OUTBOX copy points at the served PNG
 // (/api/claim/<token>/qr — fine in-app), but the SENT copy embeds it as an
 // inline cid: attachment, because remote clients can't fetch our dev host and
 // Gmail strips data: URIs.
 
 import QRCode from "qrcode";
+import nodemailer, { type Transporter } from "nodemailer";
 import { appendOutbox, baseUrl } from "@/lib/claims";
+
+let _smtp: Transporter | null = null;
+function smtpTransport(): Transporter | null {
+  const user = process.env.SABLE_SMTP_USER;
+  const pass = process.env.SABLE_SMTP_PASS;
+  if (!user || !pass) return null;
+  if (!_smtp) {
+    const port = Number(process.env.SABLE_SMTP_PORT ?? 465);
+    _smtp = nodemailer.createTransport({
+      host: process.env.SABLE_SMTP_HOST ?? "smtp.gmail.com",
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+    });
+  }
+  return _smtp;
+}
 
 function fmtAmount(n: number): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -77,43 +96,29 @@ export async function sendPaymentEmail(opts: {
     // Outbox copy: served PNG renders fine inside the app.
     const html = renderHtml({ recipientName, amount, memo, claimUrl, qrSrc: `${baseUrl()}/api/claim/${token}/qr` });
 
-    const apiKey = process.env.RESEND_API_KEY;
-    const shouldSend = !!apiKey && !to.endsWith(".example");
+    const smtp = smtpTransport();
+    const deliverable = !to.endsWith(".example");
 
-    if (!shouldSend) {
+    if (!deliverable || !smtp) {
       appendOutbox({ to, subject, html, claimUrl, via: "outbox", paymentId });
       return;
     }
 
-    let ok = false;
-    let resendError: string | undefined;
+    let via: "outbox" | "smtp" = "outbox";
+    let sendError: string | undefined;
     try {
       // Sent copy: inline cid attachment — remote clients can't reach our host.
       const qrPng = await QRCode.toBuffer(claimUrl, { width: 360, margin: 1 });
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: process.env.SABLE_EMAIL_FROM ?? "Sable <onboarding@resend.dev>",
-          to,
-          subject,
-          html: renderHtml({ recipientName, amount, memo, claimUrl, qrSrc: "cid:sable-qr" }),
-          attachments: [
-            {
-              filename: "sable-claim-qr.png",
-              content: qrPng.toString("base64"),
-              content_id: "sable-qr",
-            },
-          ],
-        }),
+      await smtp.sendMail({
+        from: process.env.SABLE_EMAIL_FROM ?? `Sable <${process.env.SABLE_SMTP_USER}>`,
+        to,
+        subject,
+        html: renderHtml({ recipientName, amount, memo, claimUrl, qrSrc: "cid:sable-qr" }),
+        attachments: [{ filename: "sable-claim-qr.png", content: qrPng, cid: "sable-qr" }],
       });
-      ok = res.ok;
-      if (!ok) resendError = `Resend responded ${res.status}: ${await res.text().catch(() => "")}`.trim();
+      via = "smtp";
     } catch (err: unknown) {
-      resendError = err instanceof Error ? err.message : String(err);
+      sendError = err instanceof Error ? err.message : String(err);
     }
 
     appendOutbox({
@@ -121,9 +126,9 @@ export async function sendPaymentEmail(opts: {
       subject,
       html,
       claimUrl,
-      via: ok ? "resend" : "outbox",
+      via,
       paymentId,
-      ...(ok ? {} : { resendError }),
+      ...(sendError ? { sendError } : {}),
     });
   } catch {
     // Never throw — a mail failure must not disturb the payment path.

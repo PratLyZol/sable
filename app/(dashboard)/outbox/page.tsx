@@ -10,8 +10,8 @@ type OutboxEmail = {
   html: string;
   claimUrl: string;
   ts: number;
-  via: "outbox" | "resend";
-  resendError?: string;
+  via: "outbox" | "smtp";
+  sendError?: string;
 };
 
 function CopyButton({ value }: { value: string }) {
@@ -102,13 +102,13 @@ export default function Outbox() {
                   </div>
                   <div className="truncate text-xs text-dim">{e.subject}</div>
                   <div className="mt-1 flex flex-wrap gap-2">
-                    {e.via === "resend" ? (
-                      <span className="chip chip-ok">sent · resend</span>
+                    {e.via !== "outbox" ? (
+                      <span className="chip chip-ok">sent · {e.via}</span>
                     ) : (
                       <span className="chip">outbox</span>
                     )}
-                    {e.resendError && (
-                      <span className="chip chip-bad" title={e.resendError}>
+                    {e.sendError && (
+                      <span className="chip chip-bad" title={e.sendError}>
                         send failed
                       </span>
                     )}
