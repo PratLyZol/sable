@@ -46,6 +46,25 @@ What becomes real when `SABLE_MODE=devnet`:
 
 **Airdrops:** `npm run devnet:setup` generates and funds a treasury keypair stored in `.sable/`. If the built-in airdrop runs dry (devnet faucets are rate-limited), top the treasury address up at [faucet.solana.com](https://faucet.solana.com) and re-run the app.
 
+## Pay to email (claim flow)
+
+Every payment Sable makes — payroll, vendor payout, agent spend — emails the recipient a private claim link. No wallet, no seed phrase, nothing to install. The recipient opens the link (or scans the QR in the email) on their phone, taps **Claim funds**, and a fresh Solana keypair is generated **in their browser** and used to sweep the escrowed funds. Sable never sees the key: custody is non-custodial from the first tap.
+
+- **Email → QR → wallet → sweep.** The claim email carries a QR of the claim link. Scanning it opens the recipient's wallet page (`/claim/<token>`), where the funds waiting in escrow are swept to a keypair held only in the recipient's `localStorage`. They can back up (copy/download) the secret key from that page.
+- **The Outbox** (`/outbox`) is the sender's view: every claim email, its live preview, and a one-click **open claim page** link. With no email provider configured, this is where the emails live; with Resend configured, it mirrors what was sent.
+
+**Demo it:**
+
+1. **Run payroll** (`/payroll`) — the success strip links to the Outbox with the count of claim emails sent.
+2. **Open the Outbox** (`/outbox`) — pick an email, preview it, and click **open claim page →**.
+3. **Claim** — on the claim page, tap **Claim funds**. Watch the escrow sweep into a browser-held wallet, with the address, QR, and (in devnet) an Explorer link.
+
+**Real email (optional):** set `RESEND_API_KEY` to send for real. The shared `onboarding@resend.dev` sender only delivers to the address that owns the Resend account, so verify your own domain (and set `SABLE_EMAIL_FROM`) to email arbitrary recipients. Without a key, everything still works — emails just land in the in-app Outbox.
+
+**Phone-scan demo:** set `SABLE_PUBLIC_URL` to your machine's LAN IP (e.g. `http://192.168.1.42:3000`) and run the dev server with `next dev -H 0.0.0.0`. Claim links and QR codes then point at your LAN address so a phone on the same Wi-Fi can open them.
+
+Claim bindings — which recipient claimed to which wallet address — persist in `.sable/claims.json`, so a claimed link stays bound to its wallet across restarts and refuses to be swept to a different device.
+
 ## The 3-minute demo
 
 1. **Run payroll** (`/payroll`) — pay 5 contractors in 5 countries in one click. Then open **Explorer** (`/explorer`): the public chain view shows only ciphertext.

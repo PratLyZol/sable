@@ -11,6 +11,7 @@ const NAV = [
   { href: "/vendors", label: "Vendors" },
   { href: "/agents", label: "Agents" },
   { href: "/ledger", label: "Ledger" },
+  { href: "/outbox", label: "Outbox", suffix: "email" },
   { href: "/explorer", label: "Explorer", suffix: "public" },
 ];
 
