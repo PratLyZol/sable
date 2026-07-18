@@ -142,6 +142,43 @@ export const REGISTRY: Record<ServiceName, ServiceDef> = {
   },
 };
 
+// ---------- payload summaries (one line per purchase, shown on run cards) ----------
+
+export function summarizePayload(service: ServiceName, data: unknown): string {
+  const d = data as Record<string, any> | null | undefined;
+  try {
+    switch (service) {
+      case "listings": {
+        const l = d?.listings;
+        if (!Array.isArray(l) || l.length === 0) break;
+        const min = Math.min(...l.map((x) => Number(x?.unitPrice)).filter(Number.isFinite));
+        return `${l.length} vendors indexed · from $${min.toFixed(2)}/unit`;
+      }
+      case "orderbook": {
+        const p = d?.pairs;
+        if (!Array.isArray(p) || p.length === 0) break;
+        const tightest = Math.min(...p.map((x) => Number(x?.spreadBps)).filter(Number.isFinite));
+        const topVol = Math.max(...p.map((x) => Number(x?.vol24hUsd)).filter(Number.isFinite));
+        return `${p.length} pairs · tightest spread ${tightest.toFixed(1)}bps · $${(topVol / 1e6).toFixed(1)}M top 24h vol`;
+      }
+      case "enrich": {
+        const e = d?.entities;
+        if (!Array.isArray(e) || e.length === 0) break;
+        const avg = e.reduce((a, x) => a + (Number(x?.confidence) || 0), 0) / e.length;
+        return `${e.length} entities · avg confidence ${avg.toFixed(2)} · model ${d?.model ?? "unknown"}`;
+      }
+      case "compute": {
+        const out = d?.output;
+        if (!d?.jobId || !out) break;
+        return `job ${d.jobId} · ${Number(out.rows).toLocaleString("en-US")} rows · ${out.vcpuMinutes} vCPU·min`;
+      }
+    }
+  } catch {
+    // fall through to the generic line
+  }
+  return "payload received";
+}
+
 // ---------- pricing ----------
 
 export function clampScale(scale: number | undefined): number {

@@ -7,6 +7,7 @@
 
 import { chainMode, settleOnChain, treasuryAddressSync, treasuryTokenSync, type ChainMode } from "@/lib/chain";
 import { payAndFetch, type X402Result } from "@/lib/x402client";
+import { summarizePayload, type ServiceName } from "@/lib/x402";
 
 export type PaymentKind = "payroll" | "vendor" | "agent";
 
@@ -82,6 +83,22 @@ export type BlockedAttempt = {
   reason: string;
 };
 
+/** Proof-of-purchase for one x402 buy — receipt + a preview of the data bought. */
+export type Purchase = {
+  id: string;
+  subagentId: string;
+  service: string; // "orderbook"
+  host: string; // data.snowdrift.co
+  resource: string;
+  amountUsd: number;
+  sig: string;
+  explorerUrl?: string;
+  nonce: string;
+  ts: number;
+  summary: string; // one-line description of the purchased payload
+  preview: string; // truncated JSON of the payload itself
+};
+
 export type AgentRun = {
   id: string;
   goal: string;
@@ -93,6 +110,7 @@ export type AgentRun = {
   result?: string;
   blocked: BlockedAttempt[];
   subagents: Subagent[];
+  purchases: Purchase[];
 };
 
 export type ExplorerEntry = {
@@ -224,6 +242,7 @@ function seed(): Store {
     result:
       "Deliverable — pricing matrix across 6 x402 data vendors. Snowdrift undercuts Lexica by 31% on per-call orderbook reads; Meridian bundles compute credits at $0.11/1k calls. Full matrix attached to run ledger.",
     blocked: [],
+    purchases: [],
     subagents: [
       { id: "sa1", name: "kit-alpha", role: "Prospector", task: "Discover x402 vendors and purchase price sheets", cap: 1.2, spent: 0.98, status: "done", events: [] },
       { id: "sa2", name: "kit-bravo", role: "Enricher", task: "Verify vendor claims via per-call sampling", cap: 0.9, spent: 0.74, status: "done", events: [] },
@@ -459,6 +478,7 @@ export function dispatchFleet(goal: string, budget: number): AgentRun {
     status: "running",
     startedAt: Date.now(),
     blocked: [],
+    purchases: [],
     subagents: [
       { id: uid("sa"), name: "kit-alpha", role: "Prospector", task: "Discover and purchase primary source data over x402", cap: round2(b * 0.4), spent: 0, status: "pending", events: [] },
       { id: uid("sa"), name: "kit-bravo", role: "Enricher", task: "Pay per-call enrichment APIs to verify and augment", cap: round2(b * 0.3), spent: 0, status: "pending", events: [] },
@@ -470,6 +490,10 @@ export function dispatchFleet(goal: string, budget: number): AgentRun {
   // Devnet: hand off to the real x402 orchestrator (fire-and-forget) and return
   // the run immediately, exactly like the sim path does.
   if (chainMode() === "devnet") {
+    // Session keys minted for the fleet — completes the delegate → ct → revoke
+    // story on the public explorer (haltRun emits the matching revoke row).
+    s.slot += 1;
+    s.explorer.unshift({ slot: s.slot, sig: fakeSig(), ts: Date.now(), program: "DelegationRegistry", kind: "delegate" });
     void orchestrateDevnetFleet(s, run, goal);
     return run;
   }
@@ -551,7 +575,7 @@ async function orchestrateDevnetFleet(s: Store, run: AgentRun, goal: string): Pr
       authorize: (quote) => {
         const amt = round2(quote.amount);
         // Same flavor ordering as the sim: show the 402 quote before deciding.
-        ev(sa, "x402", `402 Payment Required ← ${quote.resource} · quote $${amt.toFixed(2)}`);
+        ev(sa, "x402", `402 Payment Required ← ${quote.resource} · quote $${amt.toFixed(2)} · nonce ${quote.memo.slice(-8)}`);
         const okCap = sa.spent + amt <= sa.cap;
         const okBudget = run.spent + amt <= run.budget;
         if (!okCap || !okBudget) {
@@ -566,11 +590,31 @@ async function orchestrateDevnetFleet(s: Store, run: AgentRun, goal: string): Pr
       },
       // recipient is a logical NAME (not an address) so it matches the x402
       // service's registry entry; memo carries the endpoint nonce it verifies.
-      pay: (quote) => settleOnChain({ recipient: `x402:${service}`, amount: round2(quote.amount), memo: quote.memo }),
+      pay: async (quote) => {
+        ev(sa, "x402", `Authorized under cap — settling $${round2(quote.amount).toFixed(2)} on devnet…`);
+        const res = await settleOnChain({ recipient: `x402:${service}`, amount: round2(quote.amount), memo: quote.memo });
+        ev(sa, "pay", `Settled on-chain · ${res.sig.slice(0, 8)}… · memo carries quote nonce`);
+        return res;
+      },
     });
     if (result.ok && result.sig) {
       const amt = round2(result.quote.amount);
+      ev(sa, "x402", `X-PAYMENT accepted → 200 OK (${result.bytes ?? 0} bytes)`);
       ev(sa, "pay", `Paid $${amt.toFixed(2)} → ${result.quote.resource} · settled on devnet · ${result.sig.slice(0, 8)}…`);
+      (run.purchases ??= []).push({
+        id: uid("rcpt"),
+        subagentId: sa.id,
+        service,
+        host: X402_HOSTS[service],
+        resource: result.quote.resource,
+        amountUsd: amt,
+        sig: result.sig,
+        explorerUrl: result.explorerUrl,
+        nonce: result.receipt?.nonce ?? result.quote.memo,
+        ts: Date.now(),
+        summary: summarizePayload(service as ServiceName, result.data),
+        preview: JSON.stringify(result.data ?? {}, null, 1).slice(0, 400),
+      });
       const payment: Payment = {
         id: uid("pay"),
         kind: "agent",
@@ -592,6 +636,9 @@ async function orchestrateDevnetFleet(s: Store, run: AgentRun, goal: string): Pr
       run.spent = round2(run.spent + amt);
       s.slot += 1 + Math.floor(Math.random() * 40);
       s.explorer.unshift({ slot: s.slot, sig: result.sig, ts: payment.ts, program: "ZkConfidentialTransfer", kind: "ct" });
+    } else if (!result.ok && result.error && result.error !== "refused by budget guard") {
+      // Budget refusals already logged a "blocked" event in authorize().
+      ev(sa, "info", `x402 handshake failed: ${result.error}`);
     }
     return result;
   };

@@ -12,12 +12,25 @@ export type X402Quote = {
   memo: string; // the quote nonce, echoed back as X-PAYMENT.nonce
 };
 
+export type X402Receipt = {
+  sig: string;
+  service: string;
+  amountUsd: number;
+  nonce: string;
+};
+
 export type X402Result = {
   ok: boolean;
   quote: X402Quote;
   sig?: string;
   explorerUrl?: string;
   error?: string;
+  /** Proof-of-purchase returned by the endpoint on the paid 200. */
+  receipt?: X402Receipt;
+  /** The purchased payload itself. */
+  data?: unknown;
+  /** Size of the paid response body in bytes. */
+  bytes?: number;
 };
 
 export type X402Service = "listings" | "orderbook" | "enrich" | "compute";
@@ -114,7 +127,27 @@ export async function payAndFetch(
     return { ok: false, quote, sig: settle.sig, error: reason };
   }
 
-  return { ok: true, quote, sig: settle.sig, explorerUrl: settle.explorerUrl };
+  let text = "";
+  try {
+    text = await paidRes.text();
+  } catch {
+    // body unreadable — still a successful purchase, just no preview
+  }
+  let body: { data?: unknown; receipt?: X402Receipt } = {};
+  try {
+    body = JSON.parse(text) as { data?: unknown; receipt?: X402Receipt };
+  } catch {
+    // unparseable body — still a successful purchase, just no preview
+  }
+  return {
+    ok: true,
+    quote,
+    sig: settle.sig,
+    explorerUrl: settle.explorerUrl,
+    receipt: body.receipt,
+    data: body.data,
+    bytes: Buffer.byteLength(text, "utf8"),
+  };
 }
 
 // ---------- helpers ----------

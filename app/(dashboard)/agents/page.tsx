@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useLive } from "@/lib/useLive";
 import { clock, usd } from "@/lib/format";
-import type { AgentRun, Payment, Subagent, SubagentEvent } from "@/lib/store";
+import type { AgentRun, Payment, Purchase, Subagent, SubagentEvent } from "@/lib/store";
 
 const PRESETS: Array<{ label: string; goal: string }> = [
   { label: "Market-research brief", goal: "Assemble a market-research brief on stablecoin payment APIs" },
@@ -60,8 +60,37 @@ function eventColor(kind: SubagentEvent["kind"]): string {
   }
 }
 
+function PurchaseRow({ p }: { p: Purchase }) {
+  const chip = (
+    <span className="chip chip-veil num">
+      {p.service} · {usd(p.amountUsd)} · {p.sig.slice(0, 8)}…
+    </span>
+  );
+  return (
+    <div className="hairline space-y-1 pt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {p.explorerUrl ? (
+          <a href={p.explorerUrl} target="_blank" rel="noreferrer" className="hover:underline" title="View receipt on Solana Explorer">
+            {chip}
+          </a>
+        ) : (
+          chip
+        )}
+        <span className="text-xs text-dim">{p.summary}</span>
+      </div>
+      <details>
+        <summary className="cursor-pointer text-xs text-faint">
+          {p.host}
+          {p.resource} · nonce {p.nonce.slice(-8)}
+        </summary>
+        <pre className="mt-1 max-h-32 overflow-y-auto rounded bg-panel2 p-2 font-mono text-xs text-dim">{p.preview}</pre>
+      </details>
+    </div>
+  );
+}
+
 function SubagentRow({ sa }: { sa: Subagent }) {
-  const events = sa.events.slice(-6);
+  const events = sa.events.slice(-10);
   return (
     <div className="hairline space-y-2 pt-3">
       <div className="flex items-start justify-between gap-3">
@@ -154,6 +183,16 @@ function RunCard({ run, payments }: { run: AgentRun; payments: Payment[] }) {
         <div className="panel-raised space-y-2 p-4">
           <div className="eyebrow">Deliverable</div>
           <p className="text-sm leading-relaxed">{run.result}</p>
+        </div>
+      ) : null}
+
+      {/* Purchased data — x402 receipts with the payloads the fleet actually bought */}
+      {run.purchases?.length ? (
+        <div className="panel-raised space-y-1 p-4">
+          <div className="eyebrow">Purchased data</div>
+          {run.purchases.map((p) => (
+            <PurchaseRow key={p.id} p={p} />
+          ))}
         </div>
       ) : null}
 
