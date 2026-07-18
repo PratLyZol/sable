@@ -20,10 +20,17 @@ type Sql = ReturnType<typeof neon>;
 let _sql: Sql | null | undefined;
 function sql(): Sql | null {
   if (_sql === undefined) {
-    const url = process.env.DATABASE_URL;
-    _sql = url ? neon(url) : null;
+    // Tolerate values pasted with surrounding quotes (dotenv strips them
+    // locally; hosted env dashboards don't) and never let a malformed URL
+    // throw — a broken DATABASE_URL must degrade to in-memory, not 500.
+    const url = process.env.DATABASE_URL?.trim().replace(/^["']|["']$/g, "");
+    try {
+      _sql = url ? neon(url) : null;
+    } catch {
+      _sql = null;
+    }
   }
-  return _sql;
+  return _sql ?? null;
 }
 
 export function persistEnabled(): boolean {
