@@ -53,7 +53,11 @@ type Accepts = {
 const TIMEOUT_MS = 30_000;
 
 function baseUrl(): string {
-  return process.env.SABLE_SELF_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+  return (
+    process.env.SABLE_SELF_URL ??
+    process.env.SABLE_PUBLIC_URL ??
+    `http://localhost:${process.env.PORT ?? 3000}`
+  );
 }
 
 function endpoint(service: X402Service, call?: number): string {

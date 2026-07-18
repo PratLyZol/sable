@@ -210,8 +210,10 @@ export function toBaseUnits(usd: number): string {
 
 // ---------- asset (mint) ----------
 
-/** Base58 mint for the 402 asset field. Missing file must not crash. */
+/** Base58 mint for the 402 asset field. Env first; missing config must not crash. */
 export function readMint(): string {
+  const env = process.env.SABLE_MINT;
+  if (env) return env;
   try {
     const raw = readFileSync(join(process.cwd(), ".sable", "mint.json"), "utf8");
     const parsed = JSON.parse(raw) as { mint?: string };

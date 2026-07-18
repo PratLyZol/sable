@@ -6,6 +6,7 @@
 // or returned.
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   Connection,
   Keypair,
@@ -46,10 +47,6 @@ function treasuryPath(): string {
 function mintPath(): string {
   return sablePath("mint.json");
 }
-function recipientsPath(): string {
-  return sablePath("recipients.json");
-}
-
 // --- public URL helpers ---
 export function explorerTx(sig: string): string {
   return `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
@@ -61,7 +58,10 @@ export function explorerAddr(addr: string): string {
 // --- mode ---
 export type ChainMode = "sim" | "devnet";
 export function chainMode(): ChainMode {
-  if (process.env.SABLE_MODE === "devnet" && fs.existsSync(treasuryPath())) {
+  if (
+    process.env.SABLE_MODE === "devnet" &&
+    (process.env.SABLE_TREASURY_SECRET || fs.existsSync(treasuryPath()))
+  ) {
     return "devnet";
   }
   return "sim";
@@ -77,16 +77,26 @@ function connection(): Connection {
   return _connection;
 }
 
+// Treasury secret resolution: SABLE_TREASURY_SECRET (JSON number array — copy
+// the contents of .sable/treasury.json) wins, so serverless deploys need no
+// writable disk; the local file is the fallback.
+function treasurySecret(): Uint8Array | null {
+  const env = process.env.SABLE_TREASURY_SECRET;
+  if (env) return Uint8Array.from(JSON.parse(env));
+  const p = treasuryPath();
+  if (!fs.existsSync(p)) return null;
+  return Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8")));
+}
+
 let _treasury: Keypair | null = null;
 function treasury(): Keypair {
   if (!_treasury) {
-    const p = treasuryPath();
-    if (!fs.existsSync(p)) {
+    const secret = treasurySecret();
+    if (!secret) {
       throw new Error(
-        `Treasury keypair not found at ${p}. Run \`npm run devnet:setup\`.`,
+        `Treasury keypair not found. Set SABLE_TREASURY_SECRET or run \`npm run devnet:setup\` (looked at ${treasuryPath()}).`,
       );
     }
-    const secret = Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8")));
     _treasury = Keypair.fromSecretKey(secret);
   }
   return _treasury;
@@ -95,10 +105,15 @@ function treasury(): Keypair {
 let _mint: PublicKey | null = null;
 function mint(): PublicKey {
   if (!_mint) {
+    const env = process.env.SABLE_MINT;
+    if (env) {
+      _mint = new PublicKey(env);
+      return _mint;
+    }
     const p = mintPath();
     if (!fs.existsSync(p)) {
       throw new Error(
-        `Mint not found at ${p}. Run \`npm run devnet:setup\` to create the devnet mint.`,
+        `Mint not found. Set SABLE_MINT or run \`npm run devnet:setup\` (looked at ${p}).`,
       );
     }
     const raw = JSON.parse(fs.readFileSync(p, "utf8")) as { mint: string };
@@ -107,14 +122,13 @@ function mint(): PublicKey {
   return _mint;
 }
 
-// treasuryAddressSync: cached from keypair file, no RPC — safe in getSnapshot().
+// treasuryAddressSync: env/file derived, no RPC — safe in getSnapshot().
 let _treasuryAddr: string | null = null;
 export function treasuryAddressSync(): string | null {
   if (_treasuryAddr) return _treasuryAddr;
   try {
-    const p = treasuryPath();
-    if (!fs.existsSync(p)) return null;
-    const secret = Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8")));
+    const secret = treasurySecret();
+    if (!secret) return null;
     _treasuryAddr = Keypair.fromSecretKey(secret).publicKey.toBase58();
     return _treasuryAddr;
   } catch {
@@ -122,80 +136,27 @@ export function treasuryAddressSync(): string | null {
   }
 }
 
-// --- recipient registry ---
-type RecipientRecord = { pubkey: string; keypairPath: string };
-type Registry = Record<string, RecipientRecord>;
-
-let _registry: Registry | null = null;
-function loadRegistry(): Registry {
-  if (_registry) return _registry;
-  const p = recipientsPath();
-  if (fs.existsSync(p)) {
-    _registry = JSON.parse(fs.readFileSync(p, "utf8")) as Registry;
-  } else {
-    _registry = {};
-  }
-  return _registry;
+// --- deterministic escrow wallets ---
+// Escrow keypairs are DERIVED, not stored: sha256(seed, recipient name) →
+// ed25519 seed → Keypair. Serverless-friendly (no writable disk, no registry
+// file) and stable across restarts/deploys as long as the seed stays the same.
+// Seed = SABLE_ESCROW_SEED, defaulting to the treasury secret so local dev
+// needs no extra config. Devnet-only scheme — never reuse with real funds.
+const _escrows = new Map<string, Keypair>();
+function deriveEscrow(name: string): Keypair {
+  const key = name.toLowerCase();
+  const cached = _escrows.get(key);
+  if (cached) return cached;
+  const seedSource =
+    process.env.SABLE_ESCROW_SEED ?? Buffer.from(treasury().secretKey).toString("hex");
+  const seed = createHash("sha256").update(`sable-escrow:${seedSource}:${key}`).digest();
+  const kp = Keypair.fromSeed(new Uint8Array(seed));
+  _escrows.set(key, kp);
+  return kp;
 }
-function saveRegistry(reg: Registry): void {
-  fs.writeFileSync(recipientsPath(), JSON.stringify(reg, null, 2));
-}
-
-function slugify(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "recipient"
-  );
-}
-
-// Serialize registry mutations so parallel first-use of the same name does not
-// create two keypairs.
-const _recipientLocks = new Map<string, Promise<string>>();
 
 export async function recipientAddress(name: string): Promise<string> {
-  const reg = loadRegistry();
-  const existing = reg[name];
-  if (existing) return existing.pubkey;
-
-  const pending = _recipientLocks.get(name);
-  if (pending) return pending;
-
-  const task = (async () => {
-    // Re-check under the lock in case another caller just wrote it.
-    const fresh = loadRegistry();
-    if (fresh[name]) return fresh[name].pubkey;
-
-    const slug = slugify(name);
-    let file = sablePath(`r_${slug}.json`);
-    // Avoid clobbering an unrelated keypair with the same slug.
-    let n = 2;
-    const usedPaths = new Set(Object.values(fresh).map((r) => r.keypairPath));
-    while (fs.existsSync(file) || usedPaths.has(path.relative(process.cwd(), file))) {
-      file = sablePath(`r_${slug}-${n}.json`);
-      n += 1;
-    }
-    const kp = Keypair.generate();
-    fs.writeFileSync(file, JSON.stringify(Array.from(kp.secretKey)));
-    fs.chmodSync(file, 0o600);
-    const pubkey = kp.publicKey.toBase58();
-    fresh[name] = {
-      pubkey,
-      keypairPath: path.relative(process.cwd(), file),
-    };
-    saveRegistry(fresh);
-    _registry = fresh;
-    return pubkey;
-  })();
-
-  _recipientLocks.set(name, task);
-  try {
-    return await task;
-  } finally {
-    _recipientLocks.delete(name);
-  }
+  return deriveEscrow(name).publicKey.toBase58();
 }
 
 // --- ATA creation serialization (per owner) so parallel payroll to the same
@@ -495,19 +456,12 @@ export function treasuryTokenSync(): number | null {
 
 // --- claim: sweep an escrow (registry) keypair to a self-custodied address ---
 
-// Load the registry keypair that custodies escrow for `name`. These keypairs
-// hold token balance but ZERO SOL (the treasury pays their fees). Returns null
-// when the name has no registry entry or the keypair file is missing/unreadable.
-// The secret key is never logged or returned.
+// The derived keypair that custodies escrow for `name`. These keypairs hold
+// token balance but ZERO SOL (the treasury pays their fees). Returns null only
+// when no treasury secret is available to derive from. Never logged.
 function recipientKeypair(name: string): Keypair | null {
-  const reg = loadRegistry();
-  const rec = reg[name];
-  if (!rec) return null;
   try {
-    const p = path.resolve(process.cwd(), rec.keypairPath);
-    if (!fs.existsSync(p)) return null;
-    const secret = Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8")));
-    return Keypair.fromSecretKey(secret);
+    return deriveEscrow(name);
   } catch {
     return null;
   }

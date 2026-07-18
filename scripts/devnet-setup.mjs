@@ -165,6 +165,11 @@ async function main() {
   console.log(`  ${explorerAddr(mintPk.toBase58())}`);
   console.log(`Token balance    : ${Number(tokenBase) / Number(BASE)}`);
   console.log("===============================================");
+  console.log("\nDeploying without a writable disk (e.g. Vercel)? Set these env vars:");
+  console.log(`SABLE_MODE=devnet`);
+  console.log(`SABLE_MINT=${mintPk.toBase58()}`);
+  console.log(`SABLE_TREASURY_SECRET=${JSON.stringify(Array.from(treasury.secretKey))}`);
+  console.log("(escrow wallets are derived from the treasury secret — set SABLE_ESCROW_SEED to rotate them)");
 }
 
 main().catch((e) => {
