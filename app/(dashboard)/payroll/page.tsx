@@ -154,6 +154,39 @@ export default function Payroll() {
     (k) => k.scope.type === "all" && k.label.startsWith("Operator"),
   );
 
+  // add-to-payroll form
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newAmount, setNewAmount] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adding) return;
+    setAddError(null);
+    setAdding(true);
+    try {
+      const res = await fetch("/api/contractors", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newName, email: newEmail, amount: parseFloat(newAmount) }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setAddError(body?.error ?? "Could not add them.");
+        return;
+      }
+      // Keep the new person checked even if the user has customized selection.
+      if (selected) setSelected(new Set([...selected, body.id]));
+      setNewName("");
+      setNewEmail("");
+      setNewAmount("");
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
     <div>
       <header className="mb-8">
@@ -226,6 +259,38 @@ export default function Payroll() {
           </tbody>
         </table>
 
+        <form className="hairline flex flex-wrap items-center gap-2 px-4 py-3" onSubmit={add}>
+          <input
+            className="min-w-0 flex-1 rounded-lg bg-panel2 px-3 py-2 text-sm"
+            placeholder="Name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            aria-label="New contractor name"
+          />
+          <input
+            className="min-w-0 flex-1 rounded-lg bg-panel2 px-3 py-2 text-sm"
+            type="email"
+            placeholder="Email — gets the claim link"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            aria-label="New contractor email"
+          />
+          <input
+            className="num w-28 rounded-lg bg-panel2 px-3 py-2 text-sm"
+            type="number"
+            min="1"
+            step="0.01"
+            placeholder="$ / cycle"
+            value={newAmount}
+            onChange={(e) => setNewAmount(e.target.value)}
+            aria-label="Pay per cycle"
+          />
+          <button type="submit" className="btn" disabled={adding || !newName.trim() || !newEmail.trim() || !newAmount}>
+            {adding ? "Adding…" : "Add to payroll"}
+          </button>
+          {addError && <span className="w-full text-xs text-bad">{addError}</span>}
+        </form>
+
         <div className="hairline flex items-center justify-between px-4 py-3">
           <div className="text-dim text-sm">
             {sel.size} selected · <span className="num text-ink">{usd(total)}</span>
@@ -272,7 +337,9 @@ export default function Payroll() {
             <tbody>
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-faint">…</td>
+                  <td colSpan={6} className="text-dim">
+                    {snap ? "No payroll runs yet — select people above and run payroll." : "…"}
+                  </td>
                 </tr>
               ) : (
                 history.map((p) => (

@@ -219,14 +219,7 @@ function seed(): Store {
     return payment;
   };
 
-  // this month's payroll, dated to the 2nd so MTD totals always include it
-  const cycle = new Date();
-  cycle.setDate(2);
-  cycle.setHours(9, 0, 0, 0);
-  const cycleName = cycle.toLocaleString("en-US", { month: "long" });
-  contractors.forEach((c, i) => {
-    pay({ kind: "payroll", counterparty: c.name, detail: `${c.flag} ${c.country}`, amount: c.amount, memo: `Payroll · ${cycleName} cycle`, ts: cycle.getTime() + i * h, contractorId: c.id });
-  });
+  // no seeded payroll history — payday starts blank; run payroll to fill it
   // vendor history
   pay({ kind: "vendor", counterparty: "Halcyon Cloud", detail: "Infrastructure", amount: 2140, memo: "June infra invoice #H-2291", ts: now - 9 * d, vendorId: "v5" });
   pay({ kind: "vendor", counterparty: "Northwind Logistics", detail: "Fulfillment", amount: 3480.5, memo: "Q3 fulfillment retainer", ts: now - 6 * d, vendorId: "v4" });
@@ -391,6 +384,41 @@ export function getSnapshot(): Snapshot {
       activeRuns: s.runs.filter((r) => r.status === "running").length,
     },
   };
+}
+
+const COUNTRY_FLAGS: Record<string, string> = {
+  portugal: "🇵🇹", india: "🇮🇳", mexico: "🇲🇽", nigeria: "🇳🇬", japan: "🇯🇵",
+  "united states": "🇺🇸", usa: "🇺🇸", canada: "🇨🇦", brazil: "🇧🇷", germany: "🇩🇪",
+  france: "🇫🇷", spain: "🇪🇸", "united kingdom": "🇬🇧", uk: "🇬🇧", argentina: "🇦🇷",
+  philippines: "🇵🇭", indonesia: "🇮🇩", kenya: "🇰🇪", poland: "🇵🇱", vietnam: "🇻🇳",
+};
+
+export function addContractor(input: {
+  name: string;
+  email: string;
+  amount: number;
+  role?: string;
+  country?: string;
+}): Contractor | { error: string } {
+  const s = store();
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  if (!name) return { error: "Name is required." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Enter a valid email." };
+  if (!Number.isFinite(input.amount) || input.amount <= 0) return { error: "Amount must be greater than 0." };
+  if (s.contractors.some((c) => c.email.toLowerCase() === email)) return { error: "That email is already on payroll." };
+  const country = input.country?.trim() || "—";
+  const contractor: Contractor = {
+    id: uid("c"),
+    name,
+    email,
+    country,
+    flag: COUNTRY_FLAGS[country.toLowerCase()] ?? "🌍",
+    role: input.role?.trim() || "Contractor",
+    amount: round2(input.amount),
+  };
+  s.contractors.push(contractor);
+  return contractor;
 }
 
 export function runPayroll(contractorIds?: string[]): { payments: Payment[]; total: number; count: number } {
