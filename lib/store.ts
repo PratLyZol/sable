@@ -183,19 +183,19 @@ function seed(): Store {
   const d = 24 * h;
 
   const contractors: Contractor[] = [
-    { id: "c1", name: "Mariana Duarte", email: "mariana@duarte.pt", country: "Portugal", flag: "🇵🇹", role: "Product engineer", amount: 4200 },
-    { id: "c2", name: "Ravi Menon", email: "ravi.menon@fastmail.in", country: "India", flag: "🇮🇳", role: "Data engineer", amount: 3850 },
-    { id: "c3", name: "Camila Reyes", email: "camila@reyes.mx", country: "Mexico", flag: "🇲🇽", role: "Brand designer", amount: 3600 },
-    { id: "c4", name: "Tunde Okafor", email: "tunde.o@hey.com", country: "Nigeria", flag: "🇳🇬", role: "Support lead", amount: 2900 },
-    { id: "c5", name: "Aiko Tanaka", email: "aiko@tanaka.jp", country: "Japan", flag: "🇯🇵", role: "Research analyst", amount: 4750 },
+    { id: "c1", name: "Mariana Duarte", email: "mariana@duarte.example", country: "Portugal", flag: "🇵🇹", role: "Product engineer", amount: 4200 },
+    { id: "c2", name: "Ravi Menon", email: "ravi.menon@fastmail.example", country: "India", flag: "🇮🇳", role: "Data engineer", amount: 3850 },
+    { id: "c3", name: "Camila Reyes", email: "camila@reyes.example", country: "Mexico", flag: "🇲🇽", role: "Brand designer", amount: 3600 },
+    { id: "c4", name: "Tunde Okafor", email: "tunde.o@hey.example", country: "Nigeria", flag: "🇳🇬", role: "Support lead", amount: 2900 },
+    { id: "c5", name: "Aiko Tanaka", email: "aiko@tanaka.example", country: "Japan", flag: "🇯🇵", role: "Research analyst", amount: 4750 },
   ];
 
   const vendors: Vendor[] = [
-    { id: "v1", name: "Snowdrift Data Co.", email: "billing@snowdrift.co", category: "Market data" },
-    { id: "v2", name: "Lexica Enrichment", email: "pay@lexica.dev", category: "Enrichment API" },
-    { id: "v3", name: "Meridian Compute", email: "ar@meridian.gg", category: "GPU compute" },
-    { id: "v4", name: "Northwind Logistics", email: "invoices@northwind.io", category: "Fulfillment" },
-    { id: "v5", name: "Halcyon Cloud", email: "billing@halcyon.host", category: "Infrastructure" },
+    { id: "v1", name: "Snowdrift Data Co.", email: "billing@snowdrift.example", category: "Market data" },
+    { id: "v2", name: "Lexica Enrichment", email: "pay@lexica.example", category: "Enrichment API" },
+    { id: "v3", name: "Meridian Compute", email: "ar@meridian.example", category: "GPU compute" },
+    { id: "v4", name: "Northwind Logistics", email: "invoices@northwind.example", category: "Fulfillment" },
+    { id: "v5", name: "Halcyon Cloud", email: "billing@halcyon.example", category: "Infrastructure" },
   ];
 
   const store: Store = {
