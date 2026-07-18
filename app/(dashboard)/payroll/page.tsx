@@ -6,7 +6,6 @@ import { usd, timeAgo, shortSig } from "@/lib/format";
 import type { Payment } from "@/lib/store";
 
 type RunResult = { payments: Payment[]; total: number; count: number };
-type CommandResult = { text: string; actions: Array<{ name: string; summary: string }> };
 
 const COMMAND_EXAMPLES = [
   "Run payroll for everyone",
@@ -14,31 +13,83 @@ const COMMAND_EXAMPLES = [
   "Run payroll for everyone except Tunde",
 ];
 
-// Natural-language payroll: the same agent brain as the copilot dock, inline.
+type FeedItem = { id: number; name: string; state: "running" | "done"; summary?: string };
+
+// Natural-language payroll: the same agent brain as the copilot dock, inline,
+// streamed over SSE so every tool call and payment shows up as it happens.
 function AgentCommandBar() {
   const [cmd, setCmd] = useState("");
   const [busy, setBusy] = useState(false);
-  const [out, setOut] = useState<CommandResult | null>(null);
+  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [report, setReport] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const execute = async (text: string) => {
     const t = text.trim();
     if (!t || busy) return;
     setBusy(true);
-    setOut(null);
+    setFeed([]);
+    setReport("");
     setErr(null);
+    let nextId = 1;
+
+    const onEvent = (event: string, data: Record<string, unknown>) => {
+      if (event === "tool") {
+        const id = nextId++;
+        setFeed((f) => [...f, { id, name: String(data.name), state: "running" }]);
+      } else if (event === "action") {
+        const name = String(data.name);
+        setFeed((f) => {
+          const i = f.findIndex((x) => x.name === name && x.state === "running");
+          if (i < 0)
+            return [...f, { id: nextId++, name, state: "done", summary: String(data.summary ?? "") }];
+          const copy = [...f];
+          copy[i] = { ...copy[i], state: "done", summary: String(data.summary ?? "") };
+          return copy;
+        });
+      } else if (event === "text") {
+        setReport((r) => r + String(data.delta ?? ""));
+      } else if (event === "error") {
+        setErr(String(data.message ?? "Command failed."));
+      }
+    };
+
     try {
       const res = await fetch("/api/command", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: t }),
       });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) setErr(body?.error ?? "Command failed.");
-      else {
-        setOut(body);
-        setCmd("");
+      if (!res.ok || !res.headers.get("content-type")?.includes("text/event-stream")) {
+        const body = await res.json().catch(() => null);
+        setErr(body?.error ?? "Command failed.");
+        return;
       }
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          let event = "message";
+          let dataRaw = "";
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event: ")) event = line.slice(7).trim();
+            else if (line.startsWith("data: ")) dataRaw += line.slice(6);
+          }
+          if (!dataRaw) continue;
+          try {
+            onEvent(event, JSON.parse(dataRaw));
+          } catch {
+            // malformed frame — skip
+          }
+        }
+      }
+      setCmd("");
     } catch {
       setErr("Command failed — is the server running?");
     } finally {
@@ -74,17 +125,21 @@ function AgentCommandBar() {
           </button>
         ))}
       </div>
-      {out && (
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            {out.actions.map((a, i) => (
-              <span key={i} className="chip chip-ok">
-                ✓ {a.name.replace(/_/g, " ")} — {a.summary}
-              </span>
-            ))}
-          </div>
-          <p className="text-sm leading-relaxed text-dim">{out.text}</p>
+      {feed.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {feed.map((f) => (
+            <span key={f.id} className={f.state === "running" ? "chip chip-gold pulse" : "chip chip-ok"}>
+              {f.state === "running" ? "⋯" : "✓"} {f.name.replace(/_/g, " ")}
+              {f.summary ? ` — ${f.summary}` : ""}
+            </span>
+          ))}
         </div>
+      )}
+      {(report || busy) && feed.length > 0 && (
+        <p className="text-sm leading-relaxed text-dim">
+          {report}
+          {busy && <span className="pulse text-gold">▍</span>}
+        </p>
       )}
       {err && <p className="text-xs text-bad">{err}</p>}
     </div>
