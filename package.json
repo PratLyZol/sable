@@ -12,8 +12,10 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.16",
     "@ai-sdk/react": "^4.0.34",
+    "@neondatabase/serverless": "^1.1.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",
+    "@vercel/functions": "^3.7.5",
     "ai": "^7.0.31",
     "next": "16.2.10",
     "nodemailer": "^9.0.3",

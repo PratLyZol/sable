@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { addContractor } from "@/lib/store";
+import { hydrateState } from "@/lib/hydrate";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  await hydrateState();
   let body: { name?: string; email?: string; amount?: number; role?: string; country?: string };
   try {
     body = await req.json();

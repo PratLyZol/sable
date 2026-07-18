@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { payVendor } from "@/lib/store";
+import { hydrateState } from "@/lib/hydrate";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  await hydrateState();
   let body: { vendor?: unknown; amount?: unknown; memo?: unknown };
   try {
     body = await req.json();

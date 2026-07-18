@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { resolveClaimToken, claimUrlFor } from "@/lib/claims";
+import { hydrateState } from "@/lib/hydrate";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
+  await hydrateState();
   const { token } = await params;
   const record = resolveClaimToken(token);
   if (!record) {

@@ -1,5 +1,6 @@
 import { generateText, isStepCount } from "ai";
 import { buildTools, selectModel, NO_KEY_ERROR, SYSTEM_PROMPT, type ActionReport } from "@/lib/copilot";
+import { hydrateState } from "@/lib/hydrate";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 /** One-shot agent command: natural language in, executed actions + a terse
  * report out. Powers the inline command bars (e.g. agent payroll). */
 export async function POST(req: Request) {
+  await hydrateState();
   const model = selectModel();
   if (!model) {
     return Response.json({ error: NO_KEY_ERROR }, { status: 500 });

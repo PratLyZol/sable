@@ -10,6 +10,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { registerSlice, persistSlice } from "@/lib/persist";
 
 // ---------- types ----------
 
@@ -107,13 +108,35 @@ function state(): ClaimState {
 }
 
 function persist(st: ClaimState): void {
+  persistSlice("claims"); // cross-instance (no-op without DATABASE_URL)
   try {
     mkdirSync(join(process.cwd(), SABLE_DIR), { recursive: true });
     writeFileSync(claimsPath(), JSON.stringify(Array.from(st.byToken.values()), null, 2));
   } catch {
     // Best-effort — a persistence failure must never break the payment path.
+    // (Vercel's filesystem is read-only; the DB slice above is the real copy.)
   }
 }
+
+// Cross-instance persistence slices (no-ops without DATABASE_URL).
+registerSlice("claims", {
+  dump: () => Array.from(state().byToken.values()),
+  load: (v) => {
+    const st: ClaimState = { byToken: new Map(), byEmail: new Map(), loaded: true };
+    for (const rec of v as ClaimRecord[]) {
+      const norm: ClaimRecord = { ...rec, sweeps: rec.sweeps ?? [], simSwept: rec.simSwept ?? 0 };
+      st.byToken.set(norm.token, norm);
+      st.byEmail.set(norm.email.toLowerCase(), norm.token);
+    }
+    globalThis.__sableClaims = st;
+  },
+});
+registerSlice("outbox", {
+  dump: () => outbox(),
+  load: (v) => {
+    globalThis.__sableOutbox = v as OutboxEmail[];
+  },
+});
 
 // ---------- claim records ----------
 
@@ -185,7 +208,10 @@ function outbox(): OutboxEmail[] {
 
 export function appendOutbox(e: Omit<OutboxEmail, "id" | "ts">): OutboxEmail {
   const full: OutboxEmail = { ...e, id: uid("out"), ts: Date.now() };
-  outbox().unshift(full);
+  const box = outbox();
+  box.unshift(full);
+  if (box.length > 50) box.length = 50; // bound the slice — each row carries full HTML
+  persistSlice("outbox");
   return full;
 }
 

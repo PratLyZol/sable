@@ -7,6 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { registerSlice, persistSlice } from "@/lib/persist";
 
 export type ServiceName = "listings" | "orderbook" | "enrich" | "compute";
 
@@ -244,11 +245,22 @@ function nonces(): Map<string, NonceRecord> {
   return globalThis.__sableX402Nonces;
 }
 
+// Cross-instance persistence: on Vercel the 402 quote and the paid retry can
+// land on different instances, so the nonce map must be shared. No-op without
+// DATABASE_URL.
+registerSlice("nonces", {
+  dump: () => Array.from(nonces().entries()),
+  load: (v) => {
+    globalThis.__sableX402Nonces = new Map(v as Array<[string, NonceRecord]>);
+  },
+});
+
 /** Mint a fresh single-use quote nonce and record it. */
 export function issueNonce(service: ServiceName, price: number): string {
   const nonce = `sable-x402-${service}-${b58(8)}`;
   nonces().set(nonce, { service, price, issuedAt: Date.now(), used: false });
   sweep();
+  persistSlice("nonces");
   return nonce;
 }
 
@@ -274,7 +286,10 @@ export function checkNonce(nonce: string | undefined, service: ServiceName): Non
 /** Mark a quote settled. Replay-proof: a second settle sees status "used". */
 export function markNonceUsed(nonce: string): void {
   const rec = nonces().get(nonce);
-  if (rec) rec.used = true;
+  if (rec) {
+    rec.used = true;
+    persistSlice("nonces");
+  }
 }
 
 /** Drop expired nonces so the map doesn't grow without bound. */

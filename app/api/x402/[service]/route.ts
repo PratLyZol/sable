@@ -20,6 +20,7 @@ import {
   type ServiceName,
 } from "@/lib/x402";
 import { verifyOnChain, recipientAddress, chainMode } from "@/lib/chain";
+import { hydrateState } from "@/lib/hydrate";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +98,7 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ service: string }> },
 ) {
+  await hydrateState();
   const { service } = await ctx.params;
   if (!isServiceName(service)) {
     return NextResponse.json({ x402Version: 1, error: `Unknown service "${service}"` }, { status: 404 });

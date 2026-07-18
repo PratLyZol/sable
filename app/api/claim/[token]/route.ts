@@ -9,6 +9,7 @@ import {
 } from "@/lib/claims";
 import { chainMode, recipientAddress, ownerTokenBalance, explorerAddr, sweepRecipient } from "@/lib/chain";
 import { getSnapshot, fakeSig, type Payment } from "@/lib/store";
+import { hydrateState } from "@/lib/hydrate";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +68,7 @@ function simPending(recipientName: string, simSwept: number): number {
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
+  await hydrateState();
   const { token } = await params;
   const record = resolveClaimToken(token);
   if (!record) {
@@ -116,6 +118,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
+  await hydrateState();
   const { token } = await params;
   const record = resolveClaimToken(token);
   if (!record) {

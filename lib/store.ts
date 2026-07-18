@@ -10,6 +10,7 @@ import { payAndFetch, type X402Result } from "@/lib/x402client";
 import { summarizePayload, type ServiceName } from "@/lib/x402";
 import { ensureClaim, claimUrlFor } from "@/lib/claims";
 import { sendPaymentEmail } from "@/lib/email";
+import { registerSlice, persistSlice, keepAlive } from "@/lib/persist";
 
 export type PaymentKind = "payroll" | "vendor" | "agent";
 
@@ -290,6 +291,31 @@ function store(): Store {
   return globalThis.__sableStore;
 }
 
+// Cross-instance persistence (no-op without DATABASE_URL). Timers are
+// process-local and non-serializable, so they never round-trip.
+registerSlice("store", {
+  dump: () => ({ ...store(), timers: [] }),
+  load: (v) => {
+    const incoming = v as Store;
+    const local = globalThis.__sableStore;
+    // Runs being orchestrated in THIS instance keep their live objects — the
+    // orchestrator mutates them by reference and re-persists as it goes.
+    if (local) {
+      for (const r of local.runs) {
+        if (r.status !== "running") continue;
+        const i = incoming.runs.findIndex((x) => x.id === r.id);
+        if (i >= 0) incoming.runs[i] = r;
+        else incoming.runs.unshift(r);
+      }
+    }
+    globalThis.__sableStore = { ...incoming, timers: local?.timers ?? [] };
+  },
+});
+
+function persistStore(): void {
+  persistSlice("store");
+}
+
 // ---------- core mutations ----------
 
 // Everything settle() sets itself: identity, signature, status, chain, explorer URL.
@@ -315,21 +341,30 @@ function settleDevnet(s: Store, p: SettleInput): Payment {
   s.payments.unshift(payment);
   // Balance is deducted up front, same as sim — refunded below if settlement fails.
   s.balance = round2(s.balance - payment.amount);
-  settleOnChain({ recipient: payment.counterparty, amount: payment.amount, memo: payment.memo })
+  // Re-look-up by id in the continuations: a hydrate() may have swapped the
+  // store (and its payment copies) while the transfer was confirming.
+  const done = settleOnChain({ recipient: payment.counterparty, amount: payment.amount, memo: payment.memo })
     .then((res) => {
-      payment.sig = res.sig;
-      payment.explorerUrl = res.explorerUrl;
-      payment.status = "settled";
+      const st = store();
+      const p2 = st.payments.find((x) => x.id === payment.id) ?? payment;
+      p2.sig = res.sig;
+      p2.explorerUrl = res.explorerUrl;
+      p2.status = "settled";
       // Only record the on-chain row once the real signature exists.
-      s.slot += 1 + Math.floor(Math.random() * 40);
-      s.explorer.unshift({ slot: s.slot, sig: res.sig, ts: payment.ts, program: "ZkConfidentialTransfer", kind: "ct" });
+      st.slot += 1 + Math.floor(Math.random() * 40);
+      st.explorer.unshift({ slot: st.slot, sig: res.sig, ts: p2.ts, program: "ZkConfidentialTransfer", kind: "ct" });
+      persistStore();
     })
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      payment.status = "failed";
-      payment.memo = `${payment.memo} · settlement failed: ${msg}`;
-      s.balance = round2(s.balance + payment.amount); // refund
+      const st = store();
+      const p2 = st.payments.find((x) => x.id === payment.id) ?? payment;
+      p2.status = "failed";
+      p2.memo = `${p2.memo} · settlement failed: ${msg}`;
+      st.balance = round2(st.balance + p2.amount); // refund
+      persistStore();
     });
+  keepAlive(done);
   return payment;
 }
 
@@ -339,7 +374,7 @@ function settleDevnet(s: Store, p: SettleInput): Payment {
 function queueClaimEmail(email: string, recipientName: string, payment: Payment): void {
   try {
     const rec = ensureClaim(email, recipientName);
-    void sendPaymentEmail({
+    keepAlive(sendPaymentEmail({
       to: email,
       recipientName,
       amount: payment.amount,
@@ -347,7 +382,7 @@ function queueClaimEmail(email: string, recipientName: string, payment: Payment)
       token: rec.token,
       claimUrl: claimUrlFor(rec.token),
       paymentId: payment.id,
-    });
+    }));
   } catch {
     // swallow — email is best-effort, the payment already settled
   }
@@ -418,6 +453,7 @@ export function addContractor(input: {
     amount: round2(input.amount),
   };
   s.contractors.push(contractor);
+  persistStore();
   return contractor;
 }
 
@@ -439,6 +475,7 @@ export function runPayroll(contractorIds?: string[]): { payments: Payment[]; tot
     queueClaimEmail(c.email, c.name, p);
     return p;
   });
+  persistStore();
   return { payments, total: round2(payments.reduce((a, p) => a + p.amount, 0)), count: payments.length };
 }
 
@@ -461,6 +498,7 @@ export function payVendor(input: { vendor: string; amount: number; memo?: string
     vendorId: vendor.id,
   });
   queueClaimEmail(vendor.email, vendor.name, p);
+  persistStore();
   return p;
 }
 
@@ -500,6 +538,7 @@ export function payByEmail(input: {
 
   const rec = ensureClaim(email, resolvedName);
   queueClaimEmail(email, resolvedName, p);
+  persistStore();
   return { payment: p, claimToken: rec.token, claimUrl: claimUrlFor(rec.token) };
 }
 
@@ -517,6 +556,7 @@ export function createViewingKey(scope: ViewingKeyScope, label?: string): Viewin
           : "Full ledger";
   const vk: ViewingKey = { key: `svk_${b58(24)}`, label: label ?? auto, scope, createdAt: Date.now() };
   s.keys.unshift(vk);
+  persistStore();
   return vk;
 }
 
@@ -588,7 +628,8 @@ export function dispatchFleet(goal: string, budget: number): AgentRun {
     // story on the public explorer (haltRun emits the matching revoke row).
     s.slot += 1;
     s.explorer.unshift({ slot: s.slot, sig: fakeSig(), ts: Date.now(), program: "DelegationRegistry", kind: "delegate" });
-    void orchestrateDevnetFleet(s, run, goal);
+    persistStore();
+    keepAlive(orchestrateDevnetFleet(run, goal));
     return run;
   }
 
@@ -629,9 +670,10 @@ export function dispatchFleet(goal: string, budget: number): AgentRun {
   let delay = 0;
   for (const [gap, fn] of steps) {
     delay += gap;
-    const t = setTimeout(() => { if (alive()) fn(); }, delay);
+    const t = setTimeout(() => { if (alive()) { fn(); persistStore(); } }, delay);
     s.timers.push(t);
   }
+  persistStore();
   return run;
 }
 
@@ -647,10 +689,11 @@ const X402_HOSTS: Record<"listings" | "orderbook" | "enrich" | "compute", string
  * sim script, but every x402 quote is fetched from a real local endpoint and every
  * payment is a real Solana devnet transfer. Fire-and-forget — dispatchFleet does
  * not await it. Checks run.status before each step so the kill switch works. */
-async function orchestrateDevnetFleet(s: Store, run: AgentRun, goal: string): Promise<void> {
+async function orchestrateDevnetFleet(run: AgentRun, goal: string): Promise<void> {
   const [alpha, bravo, charlie] = run.subagents;
   const ev = (sa: Subagent, kind: SubagentEvent["kind"], text: string) => {
     sa.events.push({ ts: Date.now(), kind, text });
+    persistStore(); // stream progress to other instances between polls
   };
   const gap = () => new Promise<void>((r) => setTimeout(r, 400 + Math.floor(Math.random() * 500)));
   const alive = () => run.status !== "halted";
@@ -724,12 +767,16 @@ async function orchestrateDevnetFleet(s: Store, run: AgentRun, goal: string): Pr
         runId: run.id,
         subagentId: sa.id,
       };
-      s.payments.unshift(payment);
-      s.balance = round2(s.balance - amt);
+      // Fresh store() lookup — a hydrate() may have swapped the store object
+      // since dispatch; the run/subagent objects stay live via the load() graft.
+      const st = store();
+      st.payments.unshift(payment);
+      st.balance = round2(st.balance - amt);
       sa.spent = round2(sa.spent + amt);
       run.spent = round2(run.spent + amt);
-      s.slot += 1 + Math.floor(Math.random() * 40);
-      s.explorer.unshift({ slot: s.slot, sig: result.sig, ts: payment.ts, program: "ZkConfidentialTransfer", kind: "ct" });
+      st.slot += 1 + Math.floor(Math.random() * 40);
+      st.explorer.unshift({ slot: st.slot, sig: result.sig, ts: payment.ts, program: "ZkConfidentialTransfer", kind: "ct" });
+      persistStore();
     } else if (!result.ok && result.error && result.error !== "refused by budget guard") {
       // Budget refusals already logged a "blocked" event in authorize().
       ev(sa, "info", `x402 handshake failed: ${result.error}`);
@@ -786,14 +833,16 @@ async function orchestrateDevnetFleet(s: Store, run: AgentRun, goal: string): Pr
     if (!alive()) return;
     run.status = "complete";
     run.completedAt = Date.now();
-    const nPaid = s.payments.filter((p) => p.runId === run.id).length;
+    const nPaid = store().payments.filter((p) => p.runId === run.id).length;
     run.result = `Deliverable — ${goal}. Assembled from ${nPaid} paid x402 sources for $${run.spent.toFixed(2)} of the $${run.budget.toFixed(2)} cap (${run.blocked.length} overspend attempt${run.blocked.length === 1 ? "" : "s"} refused by the budget guard). Full itemized spend tree is in the ledger under one viewing key.`;
+    persistStore();
   } catch (err: unknown) {
     // Never leave the run stuck "running" — complete it early with the reason.
     const msg = err instanceof Error ? err.message : String(err);
     run.status = "complete";
     run.completedAt = Date.now();
     run.result = `Run ended early: ${msg}. Spent $${run.spent.toFixed(2)} of $${run.budget.toFixed(2)}.`;
+    persistStore();
   }
 }
 
@@ -812,6 +861,7 @@ export function haltRun(runId: string): AgentRun | null {
     }
     s.slot += 1;
     s.explorer.unshift({ slot: s.slot, sig: fakeSig(), ts: Date.now(), program: "DelegationRegistry", kind: "revoke" });
+    persistStore();
   }
   return run;
 }

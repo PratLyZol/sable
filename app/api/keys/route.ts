@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createViewingKey, type ViewingKeyScope } from "@/lib/store";
+import { hydrateState } from "@/lib/hydrate";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  await hydrateState();
   let body: { scope?: unknown; label?: unknown };
   try {
     body = await req.json();

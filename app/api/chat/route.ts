@@ -7,11 +7,13 @@ import {
   type UIMessage,
 } from "ai";
 import { buildTools, selectModel, NO_KEY_ERROR, SYSTEM_PROMPT } from "@/lib/copilot";
+import { hydrateState } from "@/lib/hydrate";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  await hydrateState();
   const model = selectModel();
   if (!model) {
     return Response.json({ error: NO_KEY_ERROR }, { status: 500 });
