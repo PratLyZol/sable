@@ -5,7 +5,7 @@
 // are settled for real on Solana devnet via lib/chain + lib/x402client.
 // Persisted on globalThis so it survives HMR in dev.
 
-import { chainMode, settleOnChain, treasuryAddressSync, type ChainMode } from "@/lib/chain";
+import { chainMode, settleOnChain, treasuryAddressSync, treasuryTokenSync, type ChainMode } from "@/lib/chain";
 import { payAndFetch, type X402Result } from "@/lib/x402client";
 
 export type PaymentKind = "payroll" | "vendor" | "agent";
@@ -105,7 +105,7 @@ export type ExplorerEntry = {
 
 export type Snapshot = {
   balance: number;
-  chain: { mode: ChainMode; treasuryAddress: string | null };
+  chain: { mode: ChainMode; treasuryAddress: string | null; treasuryToken: number | null };
   contractors: Contractor[];
   vendors: Vendor[];
   payments: Payment[]; // newest first
@@ -253,6 +253,15 @@ function seed(): Store {
     createdAt: now - 2 * d,
   });
 
+  // the operator's own key: full-ledger scope, so the person running payroll
+  // sees everything the world can't — payroll, vendors, and agent spend
+  store.keys.unshift({
+    key: `svk_${b58(24)}`,
+    label: "Operator · full ledger",
+    scope: { type: "all" },
+    createdAt: now - 30 * d,
+  });
+
   return store;
 }
 
@@ -318,8 +327,13 @@ export function getSnapshot(): Snapshot {
     round2(s.payments.filter((p) => p.kind === k && p.ts >= monthStart.getTime()).reduce((a, p) => a + p.amount, 0));
   return {
     balance: s.balance,
-    // Cheap + synchronous — safe to compute on every 1.5s poll. No RPC here.
-    chain: { mode: chainMode(), treasuryAddress: treasuryAddressSync() },
+    // Cheap + synchronous — safe to compute on every 1.5s poll. No RPC here:
+    // treasuryTokenSync returns a cached value and refreshes in the background.
+    chain: {
+      mode: chainMode(),
+      treasuryAddress: treasuryAddressSync(),
+      treasuryToken: chainMode() === "devnet" ? treasuryTokenSync() : null,
+    },
     contractors: s.contractors,
     vendors: s.vendors,
     payments: s.payments,

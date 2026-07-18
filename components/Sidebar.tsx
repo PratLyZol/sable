@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLive } from "@/lib/useLive";
-import { usdc } from "@/lib/format";
+import { usdc, treasuryBalance } from "@/lib/format";
 
 const NAV = [
   { href: "/", label: "Overview" },
@@ -17,6 +17,7 @@ const NAV = [
 export function Sidebar() {
   const pathname = usePathname();
   const snap = useLive();
+  const treasury = snap ? treasuryBalance(snap) : null;
 
   return (
     <aside className="w-[232px] flex-none h-screen sticky top-0 border-r hairline flex flex-col px-4 py-6">
@@ -51,7 +52,7 @@ export function Sidebar() {
       <div className="panel p-4 mt-6">
         <div className="eyebrow">Treasury</div>
         <div className="num text-lg text-ink mt-1.5">
-          {snap ? usdc(snap.balance) : <span className="text-faint">…</span>}
+          {treasury != null ? usdc(treasury) : <span className="text-faint">…</span>}
         </div>
         <div className="mt-3">
           <span className="chip chip-veil">all transfers shielded</span>

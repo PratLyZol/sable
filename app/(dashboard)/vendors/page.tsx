@@ -6,67 +6,14 @@ import { useLive } from "@/lib/useLive";
 import { usd, timeAgo, shortSig } from "@/lib/format";
 import type { Payment, ViewingKey } from "@/lib/store";
 
-const inputCls = "bg-panel2 border hairline rounded-lg px-3 py-2 w-full text-ink";
-
-// Renders a payment's on-chain signature: a live "settling" chip while the
-// devnet transfer confirms, "failed" on error, an Explorer link once the real
-// sig lands, or the plain sig for simulated transfers.
-function PaymentSig({ p }: { p: Payment }) {
-  if (p.status === "settling") return <span className="chip chip-gold pulse">settling ⛓</span>;
-  if (p.status === "failed") return <span className="chip chip-bad">failed</span>;
-  if (p.explorerUrl)
-    return (
-      <a
-        href={p.explorerUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="sig hover:underline"
-        title="View on Solana Explorer"
-      >
-        {shortSig(p.sig)}
-      </a>
-    );
-  return <span className="sig">{shortSig(p.sig)}</span>;
-}
-
 export default function Vendors() {
   const snap = useLive();
-  const vendors = snap?.vendors ?? [];
   const keys = snap?.keys ?? [];
   const vendorPayments = (snap?.payments ?? []).filter((p) => p.kind === "vendor");
-
-  // pay-a-vendor form
-  const [vendor, setVendor] = useState("");
-  const [newVendor, setNewVendor] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [memo, setMemo] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState<Payment | null>(null);
 
   // per-row disclosure keys
   const [disclosed, setDisclosed] = useState<Record<string, ViewingKey>>({});
   const [disclosing, setDisclosing] = useState<Record<string, boolean>>({});
-
-  const send = async () => {
-    const amt = parseFloat(amount);
-    if (sending || !vendor.trim() || !Number.isFinite(amt) || amt <= 0) return;
-    setSending(true);
-    setSent(null);
-    try {
-      const res = await fetch("/api/vendors", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ vendor: vendor.trim(), amount: amt, memo: memo.trim() || undefined }),
-      });
-      if (res.ok) {
-        setSent(await res.json());
-        setAmount("");
-        setMemo("");
-      }
-    } finally {
-      setSending(false);
-    }
-  };
 
   const disclose = async (p: Payment) => {
     if (disclosing[p.id] || disclosed[p.id]) return;
@@ -96,83 +43,13 @@ export default function Vendors() {
         <h1 className="display text-3xl text-ink mt-2">Pay suppliers, not the whole chain.</h1>
         <p className="text-dim mt-2">
           Amounts and counterparties settle shielded. Hand an auditor a viewing key for exactly what they need to see.
+          To send one, ask the copilot — “Pay Halcyon Cloud $2,140 for July infra.”
         </p>
       </header>
 
       <div className="grid gap-6" style={{ gridTemplateColumns: "1fr 1.4fr" }}>
         {/* LEFT column */}
         <div className="flex flex-col gap-6">
-          <div className="panel-raised p-5">
-            <div className="eyebrow mb-3">Pay a vendor</div>
-
-            <label className="text-xs text-dim">Vendor</label>
-            {newVendor ? (
-              <input
-                className={`${inputCls} mt-1`}
-                placeholder="New vendor name"
-                value={vendor}
-                onChange={(e) => setVendor(e.target.value)}
-              />
-            ) : (
-              <select
-                className={`${inputCls} mt-1`}
-                value={vendor}
-                onChange={(e) => setVendor(e.target.value)}
-              >
-                <option value="">Select vendor…</option>
-                {vendors.map((v) => (
-                  <option key={v.id} value={v.name}>
-                    {v.name} · {v.category}
-                  </option>
-                ))}
-              </select>
-            )}
-            <button
-              type="button"
-              className="btn-ghost btn mt-1 text-xs"
-              onClick={() => {
-                setNewVendor((n) => !n);
-                setVendor("");
-              }}
-            >
-              {newVendor ? "← Pick existing vendor" : "New vendor…"}
-            </button>
-
-            <label className="text-xs text-dim mt-3 block">Amount (USDC)</label>
-            <input
-              className={`${inputCls} num mt-1`}
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-
-            <label className="text-xs text-dim mt-3 block">Memo</label>
-            <input
-              className={`${inputCls} mt-1`}
-              placeholder="What is this for?"
-              value={memo}
-              onChange={(e) => setMemo(e.target.value)}
-            />
-
-            <button className="btn-gold btn mt-4 w-full justify-center" onClick={send} disabled={sending}>
-              {sending ? "Sending…" : "Send shielded payment"}
-            </button>
-
-            {sent && (
-              <div className="panel mt-4 flex flex-wrap items-center gap-2 px-3 py-2.5">
-                <span className="chip chip-veil">
-                  <span className="shield-dot" /> shielded
-                </span>
-                <span className="text-ink text-sm">{sent.counterparty}</span>
-                <span className="num text-ink text-sm">{usd(sent.amount)}</span>
-                <PaymentSig p={sent} />
-              </div>
-            )}
-          </div>
-
           <div className="panel p-5">
             <div className="eyebrow mb-3">Viewing keys</div>
             <div className="flex flex-col gap-2.5">

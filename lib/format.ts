@@ -1,3 +1,13 @@
+import type { Snapshot } from "./store";
+
+/**
+ * Treasury balance to display: the real on-chain token balance in devnet mode
+ * (null until the first RPC fetch lands), the sim ledger balance otherwise.
+ */
+export function treasuryBalance(snap: Snapshot): number | null {
+  return snap.chain.mode === "devnet" ? snap.chain.treasuryToken : snap.balance;
+}
+
 export function usd(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 }

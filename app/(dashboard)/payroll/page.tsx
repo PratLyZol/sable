@@ -6,6 +6,90 @@ import { usd, timeAgo, shortSig } from "@/lib/format";
 import type { Payment } from "@/lib/store";
 
 type RunResult = { payments: Payment[]; total: number; count: number };
+type CommandResult = { text: string; actions: Array<{ name: string; summary: string }> };
+
+const COMMAND_EXAMPLES = [
+  "Run payroll for everyone",
+  "Pay only the engineers",
+  "Run payroll for everyone except Tunde",
+];
+
+// Natural-language payroll: the same agent brain as the copilot dock, inline.
+function AgentCommandBar() {
+  const [cmd, setCmd] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState<CommandResult | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const execute = async (text: string) => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true);
+    setOut(null);
+    setErr(null);
+    try {
+      const res = await fetch("/api/command", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: t }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) setErr(body?.error ?? "Command failed.");
+      else {
+        setOut(body);
+        setCmd("");
+      }
+    } catch {
+      setErr("Command failed — is the server running?");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel-raised mb-6 space-y-3 p-4">
+      <div className="eyebrow">Agent payroll</div>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          execute(cmd);
+        }}
+      >
+        <input
+          className="flex-1 rounded-lg bg-panel2 px-3 py-2 text-sm"
+          placeholder="Tell the agent what to run — e.g. pay everyone except Tunde"
+          value={cmd}
+          onChange={(e) => setCmd(e.target.value)}
+          disabled={busy}
+        />
+        <button type="submit" className="btn-gold btn" disabled={busy || !cmd.trim()}>
+          {busy ? "Working…" : "Execute"}
+        </button>
+      </form>
+      <div className="flex flex-wrap gap-2">
+        {COMMAND_EXAMPLES.map((s) => (
+          <button key={s} type="button" className="chip" onClick={() => execute(s)} disabled={busy}>
+            {s}
+          </button>
+        ))}
+      </div>
+      {out && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {out.actions.map((a, i) => (
+              <span key={i} className="chip chip-ok">
+                ✓ {a.name.replace(/_/g, " ")} — {a.summary}
+              </span>
+            ))}
+          </div>
+          <p className="text-sm leading-relaxed text-dim">{out.text}</p>
+        </div>
+      )}
+      {err && <p className="text-xs text-bad">{err}</p>}
+    </div>
+  );
+}
 
 // Renders a payment's on-chain signature: a live "settling" chip while the
 // devnet transfer confirms, "failed" on error, an Explorer link once the real
@@ -66,6 +150,9 @@ export default function Payroll() {
   };
 
   const history = (snap?.payments ?? []).filter((p) => p.kind === "payroll").slice(0, 10);
+  const operatorKey = (snap?.keys ?? []).find(
+    (k) => k.scope.type === "all" && k.label.startsWith("Operator"),
+  );
 
   return (
     <div>
@@ -76,6 +163,23 @@ export default function Payroll() {
           Contractors get paid to an email. No seed phrases, no wire fees, nothing public.
         </p>
       </header>
+
+      {operatorKey && (
+        <div className="panel-raised mb-6 flex flex-wrap items-center gap-3 px-4 py-3">
+          <span className="eyebrow">Operator viewing key</span>
+          <span className="chip chip-gold" title={operatorKey.key}>
+            {operatorKey.key.slice(0, 12)}…
+          </span>
+          <a href={`/disclose/${operatorKey.key}`} className="text-gold text-xs hover:underline">
+            open disclosed ledger →
+          </a>
+          <span className="text-xs text-dim">
+            Shielded from the world, not from you — this key discloses every payment you run.
+          </span>
+        </div>
+      )}
+
+      <AgentCommandBar />
 
       <div className="panel">
         <table className="tbl">
@@ -140,6 +244,11 @@ export default function Payroll() {
             <span className="shield-dot" /> amounts shielded on-chain
           </span>
           <span className="text-xs text-dim">settled in 1.2s · $0.003 network fees</span>
+          {operatorKey && (
+            <a href={`/disclose/${operatorKey.key}`} className="text-gold text-xs hover:underline">
+              view in disclosed ledger →
+            </a>
+          )}
         </div>
       )}
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useLive } from "@/lib/useLive";
-import { usdc, timeAgo } from "@/lib/format";
+import { usdc, timeAgo, treasuryBalance } from "@/lib/format";
 import type { PaymentKind } from "@/lib/store";
 
 const KIND_LABEL: Record<PaymentKind, string> = {
@@ -22,6 +22,7 @@ function Dim() {
 export default function Overview() {
   const snap = useLive();
   const runningRun = snap?.runs.find((r) => r.status === "running");
+  const treasury = snap ? treasuryBalance(snap) : null;
 
   return (
     <div>
@@ -44,7 +45,7 @@ export default function Overview() {
       <div className="grid grid-cols-4 gap-4">
         <div className="panel p-4">
           <div className="eyebrow">Treasury</div>
-          <div className="num text-2xl text-ink mt-2">{snap ? usdc(snap.balance) : <Dim />}</div>
+          <div className="num text-2xl text-ink mt-2">{treasury != null ? usdc(treasury) : <Dim />}</div>
         </div>
         <div className="panel p-4">
           <div className="eyebrow">Payroll MTD</div>

@@ -461,3 +461,33 @@ export async function treasuryStatus(): Promise<{
     explorerUrl: explorerAddr(address),
   };
 }
+
+// treasuryTokenSync: last-known on-chain token balance, safe in getSnapshot().
+// Returns the cached value immediately and refreshes via RPC in the background
+// at most once per TTL, so the 1.5s state poll never blocks on the network.
+// null until the first fetch completes (or if the ATA doesn't exist yet).
+const TOKEN_BALANCE_TTL_MS = 5_000;
+let _tokenBalance: number | null = null;
+let _tokenFetchedAt = 0;
+let _tokenFetching = false;
+export function treasuryTokenSync(): number | null {
+  if (!_tokenFetching && Date.now() - _tokenFetchedAt > TOKEN_BALANCE_TTL_MS) {
+    _tokenFetching = true;
+    (async () => {
+      const ata = getAssociatedTokenAddressSync(
+        mint(),
+        treasury().publicKey,
+        false,
+        TOKEN_2022_PROGRAM_ID,
+      );
+      const acct = await getAccount(connection(), ata, "confirmed", TOKEN_2022_PROGRAM_ID);
+      _tokenBalance = Number(acct.amount) / BASE;
+    })()
+      .catch(() => {}) // RPC hiccup — keep the stale value and retry after TTL
+      .finally(() => {
+        _tokenFetchedAt = Date.now();
+        _tokenFetching = false;
+      });
+  }
+  return _tokenBalance;
+}
