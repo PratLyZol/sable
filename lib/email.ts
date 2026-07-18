@@ -4,9 +4,12 @@
 // is set they are ALSO sent for real via Resend. Sending must NEVER throw: the
 // whole body is wrapped in try/catch so a mail failure can't disturb the payment
 // path that fired it. HTML uses inline styles only — email clients strip
-// stylesheets — and the QR is a SERVED PNG (Gmail strips data: URIs), so we point
-// at /api/claim/<token>/qr rather than embedding the image.
+// stylesheets. The QR: the OUTBOX copy points at the served PNG
+// (/api/claim/<token>/qr — fine in-app), but the SENT copy embeds it as an
+// inline cid: attachment, because remote clients can't fetch our dev host and
+// Gmail strips data: URIs.
 
+import QRCode from "qrcode";
 import { appendOutbox, baseUrl } from "@/lib/claims";
 
 function fmtAmount(n: number): string {
@@ -25,12 +28,11 @@ function renderHtml(opts: {
   recipientName: string;
   amount: number;
   memo: string;
-  token: string;
   claimUrl: string;
+  qrSrc: string;
 }): string {
-  const { recipientName, amount, memo, token, claimUrl } = opts;
+  const { recipientName, amount, memo, claimUrl, qrSrc } = opts;
   const amt = fmtAmount(amount);
-  const qrSrc = `${baseUrl()}/api/claim/${token}/qr`;
   const safeName = escapeHtml(recipientName);
   const safeMemo = escapeHtml(memo);
   const safeUrl = escapeHtml(claimUrl);
@@ -72,7 +74,8 @@ export async function sendPaymentEmail(opts: {
   try {
     const { to, recipientName, amount, memo, token, claimUrl, paymentId } = opts;
     const subject = `You've been paid $${fmtAmount(amount)} — claim it in your Sable wallet`;
-    const html = renderHtml({ recipientName, amount, memo, token, claimUrl });
+    // Outbox copy: served PNG renders fine inside the app.
+    const html = renderHtml({ recipientName, amount, memo, claimUrl, qrSrc: `${baseUrl()}/api/claim/${token}/qr` });
 
     const apiKey = process.env.RESEND_API_KEY;
     const shouldSend = !!apiKey && !to.endsWith(".example");
@@ -85,6 +88,8 @@ export async function sendPaymentEmail(opts: {
     let ok = false;
     let resendError: string | undefined;
     try {
+      // Sent copy: inline cid attachment — remote clients can't reach our host.
+      const qrPng = await QRCode.toBuffer(claimUrl, { width: 360, margin: 1 });
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -95,7 +100,14 @@ export async function sendPaymentEmail(opts: {
           from: process.env.SABLE_EMAIL_FROM ?? "Sable <onboarding@resend.dev>",
           to,
           subject,
-          html,
+          html: renderHtml({ recipientName, amount, memo, claimUrl, qrSrc: "cid:sable-qr" }),
+          attachments: [
+            {
+              filename: "sable-claim-qr.png",
+              content: qrPng.toString("base64"),
+              content_id: "sable-qr",
+            },
+          ],
         }),
       });
       ok = res.ok;
