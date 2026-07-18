@@ -9,6 +9,7 @@ import {
   getSnapshot,
   runPayroll,
   payVendor,
+  payByEmail,
   dispatchFleet,
   createViewingKey,
   haltRun,
@@ -25,7 +26,8 @@ Rules:
 - When you create a viewing key, always give the user the disclosure link in the form /disclose/<key>.
 - When asked to pay a vendor that isn't in the list, just proceed — the system creates the vendor automatically.
 - For ambiguous requests, call get_state first to ground yourself rather than asking the user to clarify.
-- When you dispatch a fleet, tell the user the run takes a minute or so and they can watch it live on the Agents page.`;
+- When you dispatch a fleet, tell the user the run takes a minute or so and they can watch it live on the Agents page.
+- Every payroll and vendor payment automatically emails the recipient a claim link (visible in the Outbox). To pay someone not in the lists, use send_money with their email — always give the user the claim URL afterward.`;
 
 export function selectModel(): LanguageModel | null {
   if (process.env.AI_GATEWAY_API_KEY) return "anthropic/claude-sonnet-5";
@@ -54,8 +56,8 @@ export function buildTools(onAction?: (a: ActionReport) => void) {
           balance: s.balance,
           totals: s.totals,
           chain: s.chain,
-          contractors: s.contractors.map((c) => ({ id: c.id, name: c.name, country: c.country, role: c.role, amount: c.amount })),
-          vendors: s.vendors.map((v) => ({ id: v.id, name: v.name, category: v.category })),
+          contractors: s.contractors.map((c) => ({ id: c.id, name: c.name, email: c.email, country: c.country, role: c.role, amount: c.amount })),
+          vendors: s.vendors.map((v) => ({ id: v.id, name: v.name, email: v.email, category: v.category })),
           recentPayments: s.payments.slice(0, 5).map((p) => ({ counterparty: p.counterparty, amount: p.amount, kind: p.kind })),
           runs: s.runs.slice(0, 10).map((r) => ({ id: r.id, goal: r.goal, status: r.status, spent: r.spent, budget: r.budget })),
           viewingKeys: s.keys.slice(0, 10).map((k) => ({ key: k.key, label: k.label })),
@@ -86,6 +88,26 @@ export function buildTools(onAction?: (a: ActionReport) => void) {
         const p = payVendor({ vendor, amount, memo });
         report("pay_vendor", `$${p.amount.toLocaleString()} → ${p.counterparty}`);
         return { counterparty: p.counterparty, amount: p.amount, sig: p.sig, memo: p.memo };
+      },
+    }),
+    send_money: tool({
+      description:
+        "Pay any email address. Sends shielded USDC into escrow and emails the recipient a claim link + QR that opens a wallet Sable creates for them. Works for people not in the contractor or vendor lists.",
+      inputSchema: z.object({
+        email: z.string().describe("Recipient's email address."),
+        amount: z.number().positive().describe("Amount in USD."),
+        memo: z.string().optional().describe("Optional memo for the payment."),
+      }),
+      execute: async ({ email, amount, memo }) => {
+        const r = payByEmail({ email, amount, memo });
+        if ("error" in r) return { error: r.error };
+        report("send_money", `$${r.payment.amount.toLocaleString()} → ${email}`);
+        return {
+          counterparty: r.payment.counterparty,
+          amount: r.payment.amount,
+          claimUrl: r.claimUrl,
+          note: "Share the claim link — it also appears in the Outbox.",
+        };
       },
     }),
     dispatch_fleet: tool({

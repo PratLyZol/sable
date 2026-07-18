@@ -249,6 +249,9 @@ export default function Payroll() {
               view in disclosed ledger →
             </a>
           )}
+          <a href="/outbox" className="text-gold text-xs hover:underline">
+            {result.count} claim emails sent → view outbox
+          </a>
         </div>
       )}
 

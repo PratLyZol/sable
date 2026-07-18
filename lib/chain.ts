@@ -18,6 +18,7 @@ import {
 } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
@@ -490,4 +491,158 @@ export function treasuryTokenSync(): number | null {
       });
   }
   return _tokenBalance;
+}
+
+// --- claim: sweep an escrow (registry) keypair to a self-custodied address ---
+
+// Load the registry keypair that custodies escrow for `name`. These keypairs
+// hold token balance but ZERO SOL (the treasury pays their fees). Returns null
+// when the name has no registry entry or the keypair file is missing/unreadable.
+// The secret key is never logged or returned.
+function recipientKeypair(name: string): Keypair | null {
+  const reg = loadRegistry();
+  const rec = reg[name];
+  if (!rec) return null;
+  try {
+    const p = path.resolve(process.cwd(), rec.keypairPath);
+    if (!fs.existsSync(p)) return null;
+    const secret = Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8")));
+    return Keypair.fromSecretKey(secret);
+  } catch {
+    return null;
+  }
+}
+
+// ownerTokenBalance: current token balance (whole tokens) held by `owner`'s ATA
+// of our mint. Any failure — no ATA, malformed address, RPC hiccup — yields 0.
+// Mirrors the treasuryStatus token read pattern.
+export async function ownerTokenBalance(owner: string): Promise<number> {
+  try {
+    const ata = getAssociatedTokenAddressSync(
+      mint(),
+      new PublicKey(owner),
+      false,
+      TOKEN_2022_PROGRAM_ID,
+    );
+    const acct = await getAccount(
+      connection(),
+      ata,
+      "confirmed",
+      TOKEN_2022_PROGRAM_ID,
+    );
+    return Number(acct.amount) / BASE;
+  } catch {
+    return 0;
+  }
+}
+
+// Serialize sweeps per name so two concurrent claims of the same escrow don't
+// both build a full-balance transfer against the same source.
+const _sweepLocks = new Map<string, Promise<SweepResult>>();
+
+export type SweepResult = { sig: string; explorerUrl: string; amount: number };
+
+// sweepRecipient: move the ENTIRE token balance of the registry escrow for
+// `name` to `destOwner`'s self-custodied address, in one transaction. The
+// treasury is the fee payer (escrow keypairs hold no SOL) and co-signs together
+// with the escrow keypair (which authorizes the transfer). When the escrow ATA
+// is missing or already empty, no transaction is sent and {amount: 0} is
+// returned — making repeat claims idempotent.
+export async function sweepRecipient(
+  name: string,
+  destOwner: string,
+): Promise<SweepResult> {
+  const pending = _sweepLocks.get(name);
+  if (pending) return pending;
+
+  const task = (async (): Promise<SweepResult> => {
+    const kp = recipientKeypair(name);
+    if (!kp) {
+      throw new Error(
+        `sweepRecipient: no registry keypair for "${name}" (nothing to claim).`,
+      );
+    }
+    // Let bad base58 throw here — the API layer maps it to a 400.
+    const dest = new PublicKey(destOwner);
+    const tre = treasury();
+    const mintPk = mint();
+
+    const escrowAta = getAssociatedTokenAddressSync(
+      mintPk,
+      kp.publicKey,
+      false,
+      TOKEN_2022_PROGRAM_ID,
+    );
+
+    let bal: bigint;
+    try {
+      const acct = await getAccount(
+        connection(),
+        escrowAta,
+        "confirmed",
+        TOKEN_2022_PROGRAM_ID,
+      );
+      bal = acct.amount;
+    } catch {
+      // No escrow ATA => nothing to sweep.
+      return { sig: "", explorerUrl: "", amount: 0 };
+    }
+    if (bal === BigInt(0)) {
+      return { sig: "", explorerUrl: "", amount: 0 };
+    }
+
+    const destAta = getAssociatedTokenAddressSync(
+      mintPk,
+      dest,
+      false,
+      TOKEN_2022_PROGRAM_ID,
+    );
+
+    const createDestIx = createAssociatedTokenAccountIdempotentInstruction(
+      tre.publicKey, // payer (escrow holds no SOL)
+      destAta,
+      dest,
+      mintPk,
+      TOKEN_2022_PROGRAM_ID,
+    );
+    const transferIx = createTransferCheckedInstruction(
+      escrowAta,
+      mintPk,
+      destAta,
+      kp.publicKey, // owner authorizing the transfer
+      bal,
+      DECIMALS,
+      [],
+      TOKEN_2022_PROGRAM_ID,
+    );
+    const memoIx = new TransactionInstruction({
+      keys: [],
+      programId: MEMO_PROGRAM_ID,
+      data: Buffer.from(`Sable claim sweep · ${name}`, "utf8"),
+    });
+
+    const tx = new Transaction().add(createDestIx, transferIx, memoIx);
+    // Escrow keypairs hold zero SOL — the treasury must pay the fee explicitly.
+    tx.feePayer = tre.publicKey;
+
+    try {
+      const sig = await sendAndConfirmTransaction(
+        connection(),
+        tx,
+        [tre, kp],
+        { commitment: "confirmed" },
+      );
+      return { sig, explorerUrl: explorerTx(sig), amount: Number(bal) / BASE };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`sweepRecipient failed for "${name}": ${msg}`);
+    }
+  })();
+
+  _sweepLocks.set(name, task);
+  try {
+    return await task;
+  } finally {
+    _sweepLocks.delete(name);
+  }
 }

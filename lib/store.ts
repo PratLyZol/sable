@@ -8,6 +8,8 @@
 import { chainMode, settleOnChain, treasuryAddressSync, treasuryTokenSync, type ChainMode } from "@/lib/chain";
 import { payAndFetch, type X402Result } from "@/lib/x402client";
 import { summarizePayload, type ServiceName } from "@/lib/x402";
+import { ensureClaim, claimUrlFor } from "@/lib/claims";
+import { sendPaymentEmail } from "@/lib/email";
 
 export type PaymentKind = "payroll" | "vendor" | "agent";
 
@@ -23,6 +25,7 @@ export type Payment = {
   status: "settled" | "settling" | "failed";
   chain: "sim" | "devnet";
   explorerUrl?: string; // devnet only, populated once the real sig lands
+  seeded?: boolean; // demo seed data — excluded from claim escrow math (devnet parity: seeds never settled on-chain)
   contractorId?: string;
   vendorId?: string;
   runId?: string;
@@ -208,7 +211,7 @@ function seed(): Store {
   };
 
   const pay = (p: SettleInput) => {
-    const payment: Payment = { ...p, id: uid("pay"), sig: fakeSig(), status: "settled", chain: "sim" };
+    const payment: Payment = { ...p, id: uid("pay"), sig: fakeSig(), status: "settled", chain: "sim", seeded: true };
     store.payments.unshift(payment);
     store.balance = round2(store.balance - payment.amount);
     store.slot += 1 + Math.floor(Math.random() * 40);
@@ -337,6 +340,26 @@ function settleDevnet(s: Store, p: SettleInput): Payment {
   return payment;
 }
 
+// Fire-and-forget: ensure a claim record exists for the recipient email and
+// email them the claim link + QR. Wrapped so it can NEVER disturb the payment
+// path that calls it — a failure here leaves the settled payment untouched.
+function queueClaimEmail(email: string, recipientName: string, payment: Payment): void {
+  try {
+    const rec = ensureClaim(email, recipientName);
+    void sendPaymentEmail({
+      to: email,
+      recipientName,
+      amount: payment.amount,
+      memo: payment.memo,
+      token: rec.token,
+      claimUrl: claimUrlFor(rec.token),
+      paymentId: payment.id,
+    });
+  } catch {
+    // swallow — email is best-effort, the payment already settled
+  }
+}
+
 export function getSnapshot(): Snapshot {
   const s = store();
   const monthStart = new Date();
@@ -375,8 +398,8 @@ export function runPayroll(contractorIds?: string[]): { payments: Payment[]; tot
   const targets = contractorIds?.length ? s.contractors.filter((c) => contractorIds.includes(c.id)) : s.contractors;
   const now = Date.now();
   const cycle = new Date().toLocaleString("en-US", { month: "long" });
-  const payments = targets.map((c, i) =>
-    settle(s, {
+  const payments = targets.map((c, i) => {
+    const p = settle(s, {
       kind: "payroll",
       counterparty: c.name,
       detail: `${c.flag} ${c.country}`,
@@ -384,8 +407,10 @@ export function runPayroll(contractorIds?: string[]): { payments: Payment[]; tot
       memo: `Payroll · ${cycle} cycle`,
       ts: now + i,
       contractorId: c.id,
-    }),
-  );
+    });
+    queueClaimEmail(c.email, c.name, p);
+    return p;
+  });
   return { payments, total: round2(payments.reduce((a, p) => a + p.amount, 0)), count: payments.length };
 }
 
@@ -398,7 +423,7 @@ export function payVendor(input: { vendor: string; amount: number; memo?: string
     vendor = { id: uid("v"), name: input.vendor.trim(), email: `pay@${q.replace(/[^a-z0-9]+/g, "")}.example`, category: "Vendor" };
     s.vendors.push(vendor);
   }
-  return settle(s, {
+  const p = settle(s, {
     kind: "vendor",
     counterparty: vendor.name,
     detail: vendor.category,
@@ -407,6 +432,47 @@ export function payVendor(input: { vendor: string; amount: number; memo?: string
     ts: Date.now(),
     vendorId: vendor.id,
   });
+  queueClaimEmail(vendor.email, vendor.name, p);
+  return p;
+}
+
+// ---------- pay by email ----------
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Slip-style "pay anyone by email". Settles a shielded payment into escrow,
+ * ensures a claim record for the recipient, and emails them a claim link + QR.
+ * Recipient name resolves to a known contractor/vendor if the email matches,
+ * else the raw lowercased email is used as both counterparty and registry key.
+ * Note: this calls settle() directly (not payVendor), so it queues its own
+ * single claim email — no double-send. */
+export function payByEmail(input: {
+  email: string;
+  amount: number;
+  memo?: string;
+}): { payment: Payment; claimToken: string; claimUrl: string } | { error: string } {
+  const s = store();
+  const email = input.email.trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) return { error: `"${input.email}" is not a valid email address.` };
+  if (!(input.amount > 0)) return { error: "Amount must be greater than 0." };
+
+  const contractor = s.contractors.find((c) => c.email.toLowerCase() === email);
+  const vendor = contractor ? undefined : s.vendors.find((v) => v.email.toLowerCase() === email);
+  const resolvedName = contractor?.name ?? vendor?.name ?? email;
+
+  const p = settle(s, {
+    kind: "vendor",
+    counterparty: resolvedName,
+    detail: "Email transfer",
+    amount: round2(input.amount),
+    memo: input.memo ?? "Payment from Sable",
+    ts: Date.now(),
+    ...(vendor ? { vendorId: vendor.id } : {}),
+  });
+
+  const rec = ensureClaim(email, resolvedName);
+  queueClaimEmail(email, resolvedName, p);
+  return { payment: p, claimToken: rec.token, claimUrl: claimUrlFor(rec.token) };
 }
 
 // ---------- viewing keys ----------
